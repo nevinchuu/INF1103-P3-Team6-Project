@@ -20,16 +20,18 @@ def read_resume_file(file_path: str) -> str:
     else:
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
+
+def get_resume_file_path() -> str:
+    """Returns the absolute path to the resume file."""
+    # Get the directory where this python script is located
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Return to Project root to access data folder
+    project_root = os.path.abspath(os.path.join(base_dir, ".."))
+    
+    # Define the path to the resume file
+    return os.path.join(project_root, "data", "nevin_chua.pdf")
         
-        
-# Path to the current script (e.g., Project/src/agent.py)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # src folder
 
-#Return to Project root to access data folder
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..")) 
-
-# Define the path to the resume file
-RESUME_FILE_PATH = os.path.join(PROJECT_ROOT, "data", "nevin_chua.pdf")
-
-resume_text = read_resume_file(RESUME_FILE_PATH)
-print(f"Resume text extracted:\n{resume_text[:200]}...")  # Print first 200 chars
+resume_text = read_resume_file(get_resume_file_path())
+print(f"Resume text extracted:\n{resume_text[:200]}...")  
