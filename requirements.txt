@@ -4,6 +4,9 @@
 # PDF Processing
 pypdf==4.0.1
 
+# DOCX Processing
+python-docx==1.1.2
+
 # AI / LLM API Integration
 
 # Data Manipulation & Validation
