@@ -1,2 +1,5 @@
 .env
 .venv/
+results/
+output_results/
+__pycache__/
