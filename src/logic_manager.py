@@ -10,16 +10,16 @@ def load_inventory():
             for item in job_listings:
                 pay_range = item.get("pay_range", {})
                 nested_list.append({
-                    "job_title": item.get("job_title", "N/A"),
-                    "company": item.get("company", "N/A"),
-                    "location": item.get("location", "N/A"),
-                    "employment_type": item.get("employment_type", "N/A"),
-                    "suitability_reason": item.get("suitability_reason", "N/A"),
-                    "currency": pay_range.get("currency", "N/A"),
-                    "min_pay": pay_range.get("min", "N/A"),
-                    "max_pay": pay_range.get("max", "N/A"),
-                    "period": pay_range.get("period", "N/A"),
-                    "job_url": item.get("job_url", "N/A")
+                    "job_title": item.get("job_title", "NaN"),
+                    "company": item.get("company", "NaN"),
+                    "location": item.get("location", "NaN"),
+                    "employment_type": item.get("employment_type", "NaN"),
+                    "suitability_reason": item.get("suitability_reason", "NaN"),
+                    "min": pay_range.get("min", -1),
+                    "max": pay_range.get("max", -1),
+                    "currency": pay_range.get("currency", "NaN"),
+                    "period": pay_range.get("period", "NaN"),
+                    "job_url": item.get("job_url", "NaN")
                 })
         return nested_list
 
@@ -35,13 +35,12 @@ def display_listings(listings):
         print(f"Location: {item['location']}")
         print(f"Employment Type: {item['employment_type']}")
         print(f"Suitability Reason: {item['suitability_reason']}")
-        print(f"Min Pay: {item['min_pay']}")
-        print(f"Max Pay: {item['max_pay']}")
+        print(f"Min Pay: {item['min']}")
+        print(f"Max Pay: {item['max']}")
         print(f"Currency: {item['currency']}")
         print(f"Period: {item['period']}")
         print(f"URL: {item.get('job_url', 'N/A')}")
         print("==========================================")
-        
         
 listing_json = load_inventory()
 display_listings(listing_json)
