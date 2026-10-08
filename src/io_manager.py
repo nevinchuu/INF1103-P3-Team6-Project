@@ -1,5 +1,8 @@
 import os
 
+from docx import Document
+from pypdf import PdfReader
+
 RESUME_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resumes")
 ALLOWED_EXTENSIONS = [".pdf", ".docx"]
 MIN_RESUME_CHARS = 100
@@ -88,3 +91,52 @@ def prompt_yes_no(prompt):
         if answer in ("n", "no"):
             return False
         display_error("Please type y or n.")
+
+
+def check_resume_file(path):
+    """Return what is wrong with a file, or an empty string."""
+    if not os.path.exists(path):
+        return f"File not found: {path}"
+    if not os.path.isfile(path):
+        return "That is a folder, not a file."
+    extension = os.path.splitext(path)[1].lower()
+    if extension not in ALLOWED_EXTENSIONS:
+        return f"'{extension}' files are not supported. Please use a PDF or Word (.docx) file."
+    if os.path.getsize(path) == 0:
+        return "That file is empty."
+    return ""
+
+
+def read_pdf(path):
+    """Return the text of a PDF file."""
+    reader = PdfReader(path)
+    pages = []
+    for page in reader.pages:
+        pages.append(page.extract_text() or "")
+    return "\n".join(pages)
+
+
+def read_docx(path):
+    """Return the text of a Word file."""
+    document = Document(path)
+    lines = []
+    for paragraph in document.paragraphs:
+        lines.append(paragraph.text)
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                lines.append(cell.text)
+    return "\n".join(lines)
+
+
+def read_resume(path):
+    """Return the resume text, or an empty string if unreadable."""
+    try:
+        if path.lower().endswith(".pdf"):
+            text = read_pdf(path)
+        else:
+            text = read_docx(path)
+    except Exception as error:
+        display_error(f"Could not open the file ({type(error).__name__}).")
+        return ""
+    return text.strip()
