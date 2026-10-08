@@ -1,6 +1,6 @@
 """Test harness for ai_manager.py - run this to try the AI manager on its own.
 
-    python src/ai_manager_test.py
+    python src/ai_manager_test/ai_manager_test.py
 
 ai_manager.py only contains AI manager work (prompts, API calls, parsing,
 validation). To test it end to end, this file fills in the parts other managers
@@ -16,13 +16,22 @@ Once those managers exist, main.py should use them instead of this file.
 
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
-import ai_manager
+# This file lives in src/ai_manager_test/, but ai_manager.py is in src/.
+# Add src/ to the places Python looks for imports so "import ai_manager" works.
+# (append, not insert: this folder must stay first, or "import ai_manager_test" from
+# compare_models.py would find this folder instead of this file)
+SRC_DIR = Path(__file__).resolve().parent.parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.append(str(SRC_DIR))
+
+import ai_manager  # noqa: E402 (import after the sys.path change above)
 
 TOP_N_RESULTS = 10  # job listings in the final output
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output_results"
+OUTPUT_DIR = Path(__file__).resolve().parent / "output_results"  # src/ai_manager_test/output_results
 
 
 # ==========================================
@@ -48,8 +57,8 @@ def get_data_root() -> str:
     # Get the directory where this python script is located
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Return to Project root to access data folder
-    project_root = os.path.abspath(os.path.join(base_dir, ".."))
+    # Go up two levels (src/ai_manager_test -> src -> project root) to reach the data folder
+    project_root = os.path.abspath(os.path.join(base_dir, "..", ".."))
 
     # Define the path to the resume file
     data_root = os.path.join(project_root, "data")
@@ -149,7 +158,8 @@ def format_output(profile: dict, jobs: list[dict]) -> dict:
 
 
 def save_output(output: dict) -> Path:
-    """Writes the formatted output to output_results/ as a timestamped JSON file; returns its path."""
+    """Writes the formatted output to src/ai_manager_test/output_results/ as a timestamped
+    JSON file; returns its path."""
     OUTPUT_DIR.mkdir(exist_ok=True)  # create the folder if it doesn't exist yet
     # e.g. output_results/job_matches_20261008_143012.json - a new file every run
     path = OUTPUT_DIR / f"job_matches_{datetime.now():%Y%m%d_%H%M%S}.json"

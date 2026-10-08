@@ -9,8 +9,8 @@ from openai import OpenAI
 
 logging.basicConfig(level=logging.INFO)
 
-# Load .env from the project root (parent of src/)
-load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+# Load .env from the project root (this file is in src/ai_manager_test/, so go up three levels)
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent.parent / ".env")
 
 
 client = OpenAI(
@@ -42,7 +42,7 @@ def read_resume_file(file_path: str) -> str:
 
 def get_data_root() -> str:
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(base_dir, ".."))
+    project_root = os.path.abspath(os.path.join(base_dir, "..", ".."))
     data_root = os.path.join(project_root, "data")
     return data_root
 

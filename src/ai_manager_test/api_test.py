@@ -3,8 +3,8 @@ import os
 from dotenv import load_dotenv
 
 
-# Find root directory (parent of 'src/' where test.py lives)
-root_dir = Path(__file__).resolve().parent.parent
+# Find root directory (this file is in src/ai_manager_test/, so go up three levels)
+root_dir = Path(__file__).resolve().parent.parent.parent
 env_path = root_dir / ".env"
 
 

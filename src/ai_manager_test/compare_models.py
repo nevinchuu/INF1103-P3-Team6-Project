@@ -3,8 +3,10 @@
 Each model runs the full ai_manager flow (extract profile -> search jobs ->
 extract job requirements -> rank -> format), and its top 2 jobs are shown
 side by side with time, token usage and cost. Results are exported to
-results/ as JSON (full detail) and Markdown (readable summary).
+src/ai_manager_test/results/ as JSON (full detail) and Markdown (readable summary).
 Edit MODELS_TO_TEST and PRICES to change which models are compared.
+
+    python src/ai_manager_test/compare_models.py
 """
 
 import json
@@ -13,8 +15,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import ai_manager
+# ai_manager_test must be imported first: it adds src/ to the import path,
+# which "import ai_manager" needs (ai_manager.py is one folder up, in src/)
 import ai_manager_test
+import ai_manager  # noqa: E402
 
 # (provider, model) pairs; providers are the keys of ai_manager.PROVIDERS.
 # Exact model IDs (not "-latest" aliases) so each run maps to a known price.
@@ -49,7 +53,7 @@ PRICES = {
 }
 
 TOP_N = 2
-RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
+RESULTS_DIR = Path(__file__).resolve().parent / "results"  # src/ai_manager_test/results
 
 # Models that search the same job title get the same listings, so differences
 # between them come from the model rather than from the job portal changing mid-run.

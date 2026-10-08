@@ -33,4 +33,4 @@ jobs:
           # Injects the GitHub Secret as a system environment variable
           QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
         run: |
-          python src/api_test.py
+          python src/ai_manager_test/api_test.py

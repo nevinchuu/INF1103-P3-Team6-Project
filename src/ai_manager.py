@@ -3,7 +3,7 @@
 Turns unstructured text (resumes, job postings) into clean, validated records.
 All pass/fail decisions, scoring and filtering belong in logic_manager.
 Reading the resume file belongs to the input manager. To try this module on its
-own, run ai_manager_test.py.
+own, run src/ai_manager_test/ai_manager_test.py.
 
 WHAT main.py CALLS
 ------------------
@@ -130,7 +130,7 @@ set_provider(os.getenv("AI_PROVIDER", DEFAULT_PROVIDER), os.getenv("AI_MODEL"))
 # parallel threads, so updates are locked.
 # Why a lock: two threads doing "_usage['requests'] += 1" at the same moment can
 # overwrite each other's update. "with _usage_lock:" lets only one thread in at a time.
-# compare_models.py uses these to work out the cost of a run.
+# ai_manager_test/compare_models.py uses these to work out the cost of a run.
 _usage_lock = threading.Lock()
 _usage = {"requests": 0, "input_tokens": 0, "output_tokens": 0}
 
@@ -740,8 +740,8 @@ def fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
 
 # ==========================================
 # 6. PUBLIC FUNCTIONS FOR OTHER MODULES
-# These tie sections 1-5 together. Other files (main.py, ai_manager_test.py,
-# compare_models.py) should call these rather than the lower-level functions above.
+# These tie sections 1-5 together. Other files (main.py, and the scripts in
+# src/ai_manager_test/) should call these rather than the lower-level functions above.
 # main.py normally only needs run_ai_pipeline.
 # ==========================================
 
