@@ -5,8 +5,22 @@ def load_inventory():
         nested_list = []
         with open("src/sample_job_listings.json", "r") as file:
             data = json.load(file)
-        for item in data:
-            nested_list.append({"job_title": item["job_title"], "company": item["company"], "location": item["location"], "employment_type": item["employment_type"], "suitability_reason": item["suitability_reason"], "min_pay": item["min_pay"], "max_pay": item["max_pay"], "currency": item["currency"], "job_url": item["job_url"], "comments": item["comments"]})
+            job_listings = data.get("job_listings", [])
+            
+            for item in job_listings:
+                pay_range = item.get("pay_range", {})
+                nested_list.append({
+                    "job_title": item.get("job_title", "N/A"),
+                    "company": item.get("company", "N/A"),
+                    "location": item.get("location", "N/A"),
+                    "employment_type": item.get("employment_type", "N/A"),
+                    "suitability_reason": item.get("suitability_reason", "N/A"),
+                    "currency": pay_range.get("currency", "N/A"),
+                    "min_pay": pay_range.get("min", "N/A"),
+                    "max_pay": pay_range.get("max", "N/A"),
+                    "period": pay_range.get("period", "N/A"),
+                    "job_url": item.get("job_url", "N/A")
+                })
         return nested_list
 
     except FileNotFoundError:
@@ -14,7 +28,7 @@ def load_inventory():
         return []
 
 def display_listings(listings):
-    print("=====================================================")
+    print("==========================================")
     for item in listings:
         print(f"Job Title: {item['job_title']}")
         print(f"Company: {item['company']}")
@@ -24,9 +38,10 @@ def display_listings(listings):
         print(f"Min Pay: {item['min_pay']}")
         print(f"Max Pay: {item['max_pay']}")
         print(f"Currency: {item['currency']}")
-        print(f"Job URL: {item['job_url']}")
-        print(f"Comments: {item['comments']}")
-        print("=====================================================\n")
-
+        print(f"Period: {item['period']}")
+        print(f"URL: {item.get('job_url', 'N/A')}")
+        print("==========================================")
+        
+        
 listing_json = load_inventory()
 display_listings(listing_json)
