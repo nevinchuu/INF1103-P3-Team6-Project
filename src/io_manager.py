@@ -140,3 +140,52 @@ def read_resume(path):
         display_error(f"Could not open the file ({type(error).__name__}).")
         return ""
     return text.strip()
+
+
+def list_resumes():
+    """Return the PDF and Word files in the resumes folder."""
+    try:
+        os.makedirs(RESUME_FOLDER, exist_ok=True)
+        all_names = sorted(os.listdir(RESUME_FOLDER))
+    except OSError:
+        return []
+    names = []
+    for name in all_names:
+        extension = os.path.splitext(name)[1].lower()
+        if extension in ALLOWED_EXTENSIONS and not name.startswith("~$"):
+            names.append(name)
+    return names
+
+
+def prompt_resume():
+    """Let the user pick a resume and return its path and text."""
+    while True:
+        names = list_resumes()
+        if not names:
+            display_error("No PDF or Word (.docx) files found. Put your resume in this folder:")
+            display_message(f"    {RESUME_FOLDER}")
+            answer = input("Press Enter to check again, or q to cancel: ").strip().lower()
+            if answer == "q":
+                return None
+            continue
+
+        choice = prompt_choice("Choose your resume", names + [MENU_REFRESH, MENU_CANCEL])
+        if choice == MENU_CANCEL:
+            return None
+        if choice == MENU_REFRESH:
+            continue
+
+        path = os.path.join(RESUME_FOLDER, choice)
+        problem = check_resume_file(path)
+        if problem:
+            display_error(problem)
+            continue
+
+        text = read_resume(path)
+        if len(text) < MIN_RESUME_CHARS:
+            display_error("Could not read enough text from that file. It may be a scanned image, "
+                          "password-protected or corrupted. Please try another file.")
+            continue
+
+        display_message(f"Resume loaded ({len(text)} characters).")
+        return {"resume_path": path, "resume_text": text}
