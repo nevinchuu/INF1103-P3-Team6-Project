@@ -189,3 +189,38 @@ def prompt_resume():
 
         display_message(f"Resume loaded ({len(text)} characters).")
         return {"resume_path": path, "resume_text": text}
+
+
+def prompt_filters():
+    """Ask for job preferences and return them as a dict."""
+    display_message("\nYour job preferences (press Enter to accept the default)")
+
+    while True:
+        min_salary = prompt_number("Minimum monthly salary", 0, MAX_SALARY, default=0)
+        max_salary = prompt_number("Maximum monthly salary", 0, MAX_SALARY, default=MAX_SALARY)
+        if max_salary >= min_salary:
+            break
+        display_error("Maximum salary cannot be lower than minimum salary. Please enter both again.")
+
+    max_years = prompt_number("Hide jobs that need more than how many years of experience",
+                              0, MAX_EXPERIENCE_YEARS, default=MAX_EXPERIENCE_YEARS)
+    job_type = prompt_choice("Job type", JOB_TYPES)
+    work_arrangement = prompt_choice("Work arrangement", WORK_ARRANGEMENTS)
+
+    return {
+        "min_salary": min_salary,
+        "max_salary": max_salary,
+        "max_years_experience": max_years,
+        "job_type": job_type,
+        "work_arrangement": work_arrangement,
+    }
+
+
+def collect_input():
+    """Collect the resume and filters for one search."""
+    display_header("NEW SEARCH")
+    record = prompt_resume()
+    if record is None:
+        return None
+    record["filters"] = prompt_filters()
+    return record
