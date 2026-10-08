@@ -8,8 +8,11 @@ pypdf==6.19.0
 # DOCX Processing
 python-docx==1.1.2
 
-# AI / LLM API Integration (OpenAI-compatible client, used for Qwen and Gemini)
+# AI / LLM API Integration
+# openai: OpenAI, plus Qwen and Gemini through their OpenAI-compatible endpoints
+# anthropic: Claude
 openai==3.24.0
+anthropic==1.11.0
 
 # Job Portal API (MyCareersFuture)
 requests==2.34.2
