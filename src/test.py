@@ -1,10 +1,16 @@
 import json
 import logging
 import os
+from pathlib import Path
+
 import requests
+from dotenv import load_dotenv
 from openai import OpenAI
 
 logging.basicConfig(level=logging.INFO)
+
+# Load .env from the project root (parent of src/)
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 
 client = OpenAI(
