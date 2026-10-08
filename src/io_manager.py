@@ -313,6 +313,30 @@ def check_ai_result(profile, jobs):
     return ""
 
 
+def prompt_missing_data(profile):
+    """Ask for details the AI could not find in the resume."""
+    if profile.get("highest_qualification", "None") == "None":
+        display_message("\nThe AI could not find a completed qualification in your resume.")
+        level = prompt_choice("Your highest completed qualification", EDUCATION_LEVELS)
+        profile["highest_qualification"] = level
+        if not profile.get("qualification_detail"):
+            profile["qualification_detail"] = level
+
+    if not profile.get("core_skills"):
+        display_message("\nThe AI could not find any skills in your resume.")
+        skills = []
+        while not skills:
+            answer = prompt_text("Your skills, separated by commas (e.g. Python, Excel)")
+            for skill in answer.split(","):
+                if skill.strip():
+                    skills.append(skill.strip())
+            if not skills:
+                display_error("Please enter at least one skill.")
+        profile["core_skills"] = skills
+
+    return profile
+
+
 def run_search(process_function, record):
     """Run one search, offering a retry if it fails."""
     while True:
