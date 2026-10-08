@@ -224,3 +224,80 @@ def collect_input():
         return None
     record["filters"] = prompt_filters()
     return record
+
+
+def shorten(text, width):
+    """Cut text to fit a column."""
+    text = str(text)
+    if len(text) <= width:
+        return text
+    return text[:width - 3] + "..."
+
+
+def join_list(value):
+    """Join a list into comma-separated text."""
+    if not isinstance(value, list) or not value:
+        return "None"
+    names = []
+    for item in value:
+        if isinstance(item, dict):
+            item = item.get("job_skill", "")
+        names.append(str(item))
+    return ", ".join(names)
+
+
+def format_salary(job):
+    """Return a job's salary range as text."""
+    low = job.get("min_salary", 0)
+    high = job.get("max_salary", 0)
+    if not isinstance(low, (int, float)) or not isinstance(high, (int, float)) or (low == 0 and high == 0):
+        return "Not stated"
+    return f"${low:,.0f} - ${high:,.0f} {job.get('salary_period', 'monthly')}"
+
+
+def display_profile(profile):
+    """Show what the AI found in the resume."""
+    display_header("YOUR PROFILE")
+    print(f"Name          : {profile.get('candidate_name', 'N/A')}")
+    print(f"Qualification : {profile.get('qualification_detail', 'N/A')} "
+          f"({profile.get('highest_qualification', 'N/A')})")
+    print(f"Experience    : {profile.get('years_of_experience', 'N/A')} years full-time, "
+          f"{profile.get('internship_months', 'N/A')} months internship")
+    print(f"Level         : {profile.get('seniority_level', 'N/A')}")
+    print(f"Skills        : {join_list(profile.get('core_skills'))}")
+    print(f"Certifications: {join_list(profile.get('certifications'))}")
+
+
+def display_record(job):
+    """Show every detail of one job."""
+    display_header(shorten(job.get("title", "N/A"), LINE_WIDTH))
+    print(f"Company         : {job.get('company', 'N/A')}")
+    print(f"Location        : {job.get('location', 'N/A')}")
+    print(f"Salary          : {format_salary(job)}")
+    print(f"Job type        : {join_list(job.get('employment_types'))}")
+    print(f"Work arrangement: {job.get('work_arrangement', 'N/A')}")
+    print(f"Experience      : {job.get('min_years_experience', 'N/A')} years minimum")
+    print(f"Education       : {job.get('min_education', 'N/A')}")
+    print(f"Skills you have : {join_list(job.get('matched_skills'))}")
+    print(f"Skills missing  : {join_list(job.get('missing_skills'))}")
+    print(f"Why             : {job.get('suitability_reason', 'N/A')}")
+    print(f"Link            : {job.get('job_url', 'N/A')}")
+
+
+def display_list(jobs):
+    """Show a numbered table of jobs."""
+    print(f"{'No.':<4} {'Title':<34} {'Company':<20} {'Salary'}")
+    print("-" * LINE_WIDTH)
+    for number, job in enumerate(jobs, start=1):
+        print(f"{number:<4} {shorten(job.get('title', 'N/A'), 34):<34} "
+              f"{shorten(job.get('company', 'N/A'), 20):<20} {format_salary(job)}")
+
+
+def display_result(profile, jobs):
+    """Show the profile and the matching jobs."""
+    display_profile(profile)
+    display_header(f"MATCHING JOBS ({len(jobs)})")
+    if not jobs:
+        display_message("No jobs matched. Try a new search with wider filters.")
+        return
+    display_list(jobs)
