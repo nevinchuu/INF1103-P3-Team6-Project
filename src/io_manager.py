@@ -301,3 +301,32 @@ def display_result(profile, jobs):
         display_message("No jobs matched. Try a new search with wider filters.")
         return
     display_list(jobs)
+
+
+def check_ai_result(profile, jobs):
+    """Return what is wrong with the AI result, or an empty string."""
+    if profile is None:
+        return ("The AI could not analyse your resume. Check your internet connection and API key, "
+                "or wait a minute if the AI service is busy.")
+    if not isinstance(profile, dict) or not isinstance(jobs, list):
+        return "The AI returned data in an unexpected format."
+    return ""
+
+
+def run_search(process_function, record):
+    """Run one search, offering a retry if it fails."""
+    while True:
+        display_message("\nAnalysing your resume and searching for jobs. This can take a minute...")
+        try:
+            profile, jobs = process_function(record)
+        except Exception as error:
+            display_error(f"Something went wrong during the search ({type(error).__name__}: {error}).")
+            profile, jobs = None, []
+
+        problem = check_ai_result(profile, jobs)
+        if problem == "":
+            return profile, [job for job in jobs if isinstance(job, dict)]
+
+        display_error(problem)
+        if not prompt_yes_no("Try again?"):
+            return None, []
