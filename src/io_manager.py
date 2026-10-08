@@ -37,3 +37,54 @@ def display_header(title):
     print("=" * LINE_WIDTH)
     print(title.center(LINE_WIDTH))
     print("=" * LINE_WIDTH)
+
+
+def prompt_text(prompt):
+    """Ask for text until something is typed."""
+    while True:
+        answer = input(f"{prompt}: ").strip()
+        if answer:
+            return answer
+        display_error("This cannot be left blank.")
+
+
+def prompt_number(prompt, minimum, maximum, default=None):
+    """Ask for a whole number within a range."""
+    hint = f"{minimum}-{maximum}"
+    if default is not None:
+        hint += f", Enter for {default}"
+    while True:
+        answer = input(f"{prompt} ({hint}): ").strip()
+        if answer == "" and default is not None:
+            return default
+        answer = answer.replace(",", "").replace("$", "")
+        try:
+            value = int(answer)
+        except ValueError:
+            display_error(f"Please enter a whole number between {minimum} and {maximum}.")
+            continue
+        if value < minimum or value > maximum:
+            display_error(f"Please enter a number between {minimum} and {maximum}.")
+            continue
+        return value
+
+
+def prompt_choice(prompt, options):
+    """Show numbered options and return the one picked."""
+    print()
+    print(prompt)
+    for number, option in enumerate(options, start=1):
+        print(f"  {number}. {option}")
+    choice = prompt_number("Choose", 1, len(options))
+    return options[choice - 1]
+
+
+def prompt_yes_no(prompt):
+    """Ask a yes/no question."""
+    while True:
+        answer = input(f"{prompt} (y/n): ").strip().lower()
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("n", "no"):
+            return False
+        display_error("Please type y or n.")
