@@ -4,13 +4,13 @@ import os
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from openai import OpenAI
 
 logging.basicConfig(level=logging.INFO)
 
 # Load .env from the project root (this file is in src/ai_manager_test/, so go up three levels)
-load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent.parent / ".env")
+load_dotenv(find_dotenv())
 
 
 client = OpenAI(
