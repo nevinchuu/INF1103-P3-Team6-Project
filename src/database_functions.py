@@ -3,18 +3,22 @@ import os
 
 json_database = []
 
+# The database file lives in <project root>/data/, wherever the program is run from
+DATABASE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "job_listings.json")
+
 def read_database():
     temp_arr = []
 
     # attempts to read database
     try:
-        with open('job_listings.json', 'r', encoding='utf-8') as file:
+        with open(DATABASE_PATH, 'r', encoding='utf-8') as file:
             data = json.load(file)
             return data
 
     # if failure or database doesnt exist, creates it and writes a placeholder entry into it
     except:
-        with open("job_listings.json", "w", encoding="utf-8") as file:
+        os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
+        with open(DATABASE_PATH, "w", encoding="utf-8") as file:
             json.dump(temp_arr, file)
             return temp_arr
 
@@ -27,15 +31,16 @@ def write_database(to_write):
         # create IDs for entries before writing to database
         to_write = reorder_ids(to_write)
 
-        # dump all listings into a json file for storage
-        with open("job_listings.json", "w", encoding="utf-8") as file:
-            json.dump(to_write, file)
+        # dump all listings into a json file for storage (indent=2 keeps the file readable)
+        os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
+        with open(DATABASE_PATH, "w", encoding="utf-8") as file:
+            json.dump(to_write, file, indent=2)
             return
 
     # catch any errors, write empty array instead if error exists
     except:
         to_write = []
-        with open("job_listings.json", "w", encoding="utf-8") as file:
+        with open(DATABASE_PATH, "w", encoding="utf-8") as file:
             json.dump(to_write, file)
             return
 
