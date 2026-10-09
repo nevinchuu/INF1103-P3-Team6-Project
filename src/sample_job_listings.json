@@ -1,0 +1,48 @@
+{
+  "applicant_name": "Koo Jia Juan",
+  "education": "Diploma in AI and Data Engineering",
+  "job_listings": [
+    {
+      "job_title": "2027 Software Engineer Program - Summer Internship - Singapore",
+      "company": "JPMORGAN CHASE BANK, N.A.",
+      "location": "Islandwide",
+      "employment_type": "Full Time, Internship/Attachment",
+      "suitability_reason": "The candidate has relevant programming skills in Python and AI exposure. They meet the internship nature of the role but have only 3 months of prior internship experience.",
+      "pay_range": {
+        "min": 6900,
+        "max": 10500,
+        "currency": "SGD",
+        "period": "monthly"
+      },
+      "job_url": "https://www.my123456careersfuture.gov.sg/job/banking-finance/2027-software-engineer-program-summer-internship-singapore-jpmorgan-chase-bank-na-8b7e118dd2edf0a118f61235fecf4e3e"
+    },
+    {
+      "job_title": "2027 Software Engineer Program - Full Time Analyst Singapore",
+      "company": "JPMORGAN CHASE BANK, N.A.",
+      "location": "Islandwide",
+      "employment_type": "Permanent, Full Time",
+      "suitability_reason": "The candidate has foundational AI knowledge and Python skills. However, they lack the required degree and professional experience, as they only have 3 months of internship experience.",
+      "pay_range": {
+        "min": 6900,
+        "max": 10500,
+        "currency": "SGD",
+        "period": "monthly"
+      },
+      "job_url": "h123456ttps://www.mycareersfuture.gov.sg/job/banking-finance/2027-software-engineer-program-full-time-analyst-singapore-jpmorgan-chase-bank-na-2340a48576c8aa19ad12bbf7ab2115db"
+    },
+    {
+      "job_title": "Full Stack Developer",
+      "company": "ADECCO PERSONNEL PTE LTD",
+      "location": "D09 Cairnhill, Orchard, River Valley",
+      "employment_type": "Contract",
+      "suitability_reason": "The candidate holds a Diploma, not the required Bachelor's degree. They meet the experience range (0-3 years) and possess relevant Git and JavaScript skills.",
+      "pay_range": {
+        "min": 4000,
+        "max": 7500,
+        "currency": "SGD",
+        "period": "monthly"
+      },
+      "job_url": "https://www.mycareersfuture.gov.sg/job/information-technology/full-stack-developer-adecco-personnel-6ae34fb4a805ad33380c1bacd9c588dd"
+    }
+  ]
+}
