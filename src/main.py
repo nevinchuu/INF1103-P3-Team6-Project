@@ -186,6 +186,14 @@ if __name__ == "__main__":
                         io_manager.display_error("No saved jobs yet. Run a search first.")
                         continue
 
+                    # Query (data layer): narrow the list by a word in the title, company or location
+                    keyword = io_manager.prompt_text("Filter by keyword (press Enter to show all)", allow_blank=True)
+                    if keyword:
+                        saved_jobs = database_functions.search_jobs(saved_jobs, keyword)
+                        if not saved_jobs:
+                            io_manager.display_error(f'No saved jobs match "{keyword}".')
+                            continue
+
                     io_manager.display_header(f"SAVED JOBS ({len(saved_jobs)})")
                     io_manager.display_list(saved_jobs)
                     if choice == io_manager.MENU_DETAILS:
