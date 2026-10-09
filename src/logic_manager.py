@@ -1,17 +1,18 @@
+import re
 from collections import Counter
 from urllib.parse import urlparse
-import re
 
 # Ordered lowest to highest, so a list index works as an education level number.
 # Same values as ai_manager.EDUCATION_LEVELS (copied so this layer does not import another layer)
 EDUCATION_LEVELS = ["None", "Secondary", "ITE/Nitec", "A-Level", "Diploma", "Bachelor's", "Master's", "Doctorate"]
+# Job levels, lowest to highest: the labels MyCareersFuture uses (same as ai_manager.SENIORITY_LEVELS).
+# The order is only rough (e.g. "Professional" vs "Senior Executive"), so it is used as a tie-breaker
 SENIORITY_LEVELS = [
-        "Fresh/entry level", "Non-executive", "Junior Executive", "Executive", "Senior Executive",
-        "Professional", "Manager", "Middle Management", "Senior Management",
+    "Fresh/entry level", "Non-executive", "Junior Executive", "Executive", "Senior Executive",
+    "Professional", "Manager", "Middle Management", "Senior Management",
 ]
 ANY = "Any"  # the filter value meaning "no preference" (from io_manager)
 SKILL_GAP_LIMIT = 5  # most common missing skills returned by find_skill_gaps
-
 
 # Checks the link format only, without going online, so it is instant and
 # cannot fail because of the network
@@ -78,6 +79,7 @@ def count_removed(jobs, filters):
             counts[reason] = counts.get(reason, 0) + 1
     return counts
 
+
 # How many levels a job's lowest listed level is above the candidate's, e.g. 2 for a
 # "Senior Executive" job and a "Junior Executive" candidate. 0 if the job is at or below
 # their level, or if either level is missing or not a known label
@@ -94,7 +96,8 @@ def seniority_gap(job, candidate_seniority):
 # Returns the top_n jobs that best suit the candidate (moved from ai_manager_test.py).
 # Jobs whose experience or education requirement the candidate misses rank below
 # those they meet; within each group, jobs are ordered by share of required skills
-# matched, then by how far the job's level is above the candidate's, then by number of skills matched.
+# matched, then by how far the job's level is above the candidate's, then by number
+# of skills matched.
 def select_top_jobs(profile, jobs, top_n):
     candidate_level = EDUCATION_LEVELS.index(profile["highest_qualification"])
 
@@ -104,8 +107,6 @@ def select_top_jobs(profile, jobs, top_n):
     #   3. -match_ratio     - negative so a HIGHER ratio sorts FIRST
     #   4. level_gap        - tie-breaker: a job at your level beats one 2 levels above
     #   5. -matched         - tie-breaker: more matched skills first
-    
-    
     def sort_key(job):
         experience_gap = max(0, job["min_years_experience"] - profile["years_of_experience"])
         education_ok = (
@@ -114,7 +115,6 @@ def select_top_jobs(profile, jobs, top_n):
         )
         matched = len(job["matched_skills"])
         match_ratio = matched / len(job["required_skills"]) if job["required_skills"] else 0
-        level_gap = seniority_gap(job, profile["seniority"])
         level_gap = seniority_gap(job, profile.get("seniority_level"))
         return (experience_gap, not education_ok, -match_ratio, level_gap, -matched)
 
