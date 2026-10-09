@@ -42,8 +42,25 @@ if __name__ == "__main__":
         logging.warning(f"Could not open the log file {LOG_PATH} ({type(error).__name__}); logging to the terminal only")
     logging.info(f"event=start provider={ai_manager.PROVIDER} model={ai_manager.MODEL}")
 
+    # The latest search's top jobs, kept in memory for "Show my last results" if they could not be
+    # saved, or if the saved jobs file can't be opened this session
+    session_jobs = []
+
     try:
         io_manager.display_header("RESUME JOB MATCHER")
+
+        # ---------- 4. Data layer: load every saved job on startup ----------
+        # A missing or corrupt file gives an empty list (a corrupt one is backed up first).
+        # A file that can't be opened at all (e.g. locked or no permission) is reported, not fatal.
+        try:
+            saved_count = len(database_functions.read_saved_jobs())
+            io_manager.display_message(f"{saved_count} saved job{'s' if saved_count != 1 else ''} loaded.")
+            logging.info(f"event=load_saved_jobs outcome=ok count={saved_count}")
+        except OSError as error:
+            logging.error(f"event=load_saved_jobs outcome=failed error={type(error).__name__}: {error}")
+            io_manager.display_error("Could not open your saved jobs file. New searches still work, and their "
+                                     "results are kept until you exit.")
+
         while True:
             choice = io_manager.prompt_choice("Main menu", io_manager.MENU_OPTIONS)
             if choice == io_manager.MENU_EXIT:
@@ -91,8 +108,12 @@ if __name__ == "__main__":
                         io_manager.display_error("Could not filter and rank the jobs. Please try a new search.")
                         continue
 
+                    session_jobs = top_jobs
+                    logging.info(f"event=search stage=logic outcome=ok checked={len(jobs)} shown={len(top_jobs)} "
+                                 f"removed={removed}")
+                    
                     # ---------- 4. Data layer: save the top jobs, skipping ones already saved ----------
-                    # A failed save still shows the results.
+                    # A failed save still shows the results, and session_jobs keeps them for this session
                     if top_jobs:
                         try:
                             database = database_functions.read_database()
@@ -100,7 +121,8 @@ if __name__ == "__main__":
                             database_functions.write_database(database)
                         except Exception as error:
                             logging.error(f"event=search stage=save outcome=failed error={type(error).__name__}: {error}")
-                            io_manager.display_error("Your results could not be saved, but they are shown below.")
+                            io_manager.display_error("Your results could not be saved, but they are shown below and "
+                                                     "kept until you exit.")
 
                     io_manager.display_result(profile, top_jobs)
 
@@ -115,11 +137,15 @@ if __name__ == "__main__":
                     io_manager.display_message(f"\n{summary} Showing the best {len(top_jobs)}.")
 
                 else:
-                    # Show my last results / View one job in detail: both use every saved job (data layer)
-                    saved_jobs = database_functions.read_database()
-                    if not isinstance(saved_jobs, list):
-                        saved_jobs = []
-                    saved_jobs = [job for job in saved_jobs if isinstance(job, dict)]
+                    # ---------- Show my last results / View one job in detail (data layer) ----------
+                    # Every saved job; if the file can't be opened, this session's results instead
+                    try:
+                        saved_jobs = database_functions.read_saved_jobs()
+                    except OSError as error:
+                        logging.error(f"event=show_saved outcome=failed error={type(error).__name__}: {error}")
+                        saved_jobs = session_jobs
+                        io_manager.display_error("Could not open your saved jobs file. "
+                                                 + ("Showing this session's results instead." if saved_jobs else ""))
                     if not saved_jobs:
                         io_manager.display_error("No saved jobs yet. Run a search first.")
                         continue
