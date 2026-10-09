@@ -1,4 +1,5 @@
 import json
+import os
 
 json_database = []
 
@@ -42,11 +43,12 @@ def write_database(to_write):
 def display_database(to_print):
 
     # create IDs before printing
-    to_print = reorder_ids(data_main)
+    to_print = reorder_ids(to_print)
 
     # Just print lol
     for i in to_print:
         print(i)
+
     return
 
 # will check by job URL before insertion into database
@@ -74,6 +76,7 @@ def insert_no_duplicates(to_check, data_main):
 
 # re-order the IDs of job listings after removals
 def reorder_ids(data_main):
+
     #loop through data_main and assign IDs to each JSON within the list
     for i in range(len(data_main)):
         data_main[i]["ID"] = i
@@ -84,6 +87,7 @@ def reorder_ids(data_main):
 #iterate through to_remove, an array of integers and remove specified IDs from database
 #example input [1,12,35,22]
 def remove_by_ID(to_remove,data_main):
+
     # Create IDs for entries if IDs doesnt exist
     data_main = reorder_ids(data_main)
 
