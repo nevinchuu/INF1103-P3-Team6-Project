@@ -49,7 +49,7 @@ from openai import OpenAI
 # Show INFO-level messages and above in the terminal
 logging.basicConfig(level=logging.INFO)
 
-# Load .env from the project root (parent of src/), so os.getenv("GEMINI_API_KEY") etc. work.
+# Load .env from the project root (parent of src/), so os.getenv("QWEN_API_KEY") etc. work.
 # __file__ is this file's path; .parent.parent goes up from src/ai_manager.py to the project root.
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
@@ -95,7 +95,7 @@ PROVIDER = DEFAULT_PROVIDER
 MODEL = PROVIDERS[PROVIDER]["default_model"]
 
 # --- Tunable settings ---
-JOBS_API_URL = "https://api.mycareersfuture.gov.sg/v2/jobs"
+JOBS_API_URL = "https://api.mycareersfuture.gov.sg/v2/search"
 MAX_DESCRIPTION_CHARS = 2000   # job descriptions are cut to this length to keep prompts small
 JOB_BATCH_SIZE = 10            # jobs sent to the AI per call
 JOB_FETCH_ATTEMPTS = 3         # tries per job-portal search before giving up
@@ -698,7 +698,7 @@ def fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
     raw_jobs = None
     for attempt in range(1, JOB_FETCH_ATTEMPTS + 1):
         try:
-            resp = requests.get(JOBS_API_URL, params={"search": search_query, "limit": limit}, timeout=20)
+            resp = requests.post(JOBS_API_URL, params={"search": search_query, "limit": limit}, timeout=20)
             resp.raise_for_status()  # turns HTTP errors (e.g. 500) into exceptions
             raw_jobs = resp.json().get("results", [])
             break  # success - stop retrying
