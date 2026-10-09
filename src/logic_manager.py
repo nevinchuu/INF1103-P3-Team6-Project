@@ -1,6 +1,6 @@
 import json
-import requests
-from urllib.parse import urlparse
+import urllib.request
+import urllib.error
 
 def load_inventory():
     try:
@@ -64,46 +64,37 @@ def check_list_url(listings):
     valid_url_list = []
     for item in listings:
         url = item.get("job_url", "NaN")
-        if is_url_live(url):
+        if check_url(url):
             valid_url_list.append(item)
     return valid_url_list
 
-def is_url_live(url: str, timeout: int = 15) -> bool:
-# 1. Check basic syntax / scheme
-    parsed = urlparse(url)
-    # Check if the URL has both a scheme (http/https) and a domain name (netloc)
-    if not parsed.scheme or not parsed.netloc:
-        print(f"[-] Invalid URL structure or scheme missing: '{url}'")
-        return False
-    if parsed.scheme not in ("http", "https"):
-        print(f"[-] Unsupported scheme ({parsed.scheme}): '{url}'")
-        return False
 
-    # 2. Check live connection
+
+def check_url(url):
     try:
-        # Use HEAD request first to save bandwidth
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.head(url, allow_redirects=True, timeout=timeout, headers=headers)
+        # Create request to URL
+        req = urllib.request.Request(
+            url,
+            method="HEAD",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        # Try to connect to the URL
+        with urllib.request.urlopen(req, timeout=10) as response:
+            print("URL is reachable!")
+            print("Status code:", response.status)
+            return True
 
-        # Some servers block HEAD requests; fallback to GET if HEAD returns 405/403
-        if response.status_code in (403, 405):
-            print(f"[!] HEAD request blocked ({response.status_code}), retrying with GET...")
-            response = requests.get(url, allow_redirects=True, timeout=timeout, headers=headers, stream=True)
-
-        is_live = response.status_code < 400
-    
-        if is_live:
-            print(f"[+] URL is live! Status code: {response.status_code} ({url})")
-        else:
-            print(f"[-] URL returned error status: {response.status_code} ({url})")
-
-        return is_live
-        
-    except requests.RequestException as e:
-        print(f"[-] Connection failed for '{url}': {e}")
+    # Checking HTTPError, URLError, and ValueError to handle different types of URL issues
+    except urllib.error.HTTPError as e:
+        print("HTTP error:", e.code)
         return False
-    except Exception as e:
-        print(f"[-] Unexpected error for '{url}': {e}")
+
+    except urllib.error.URLError as e:
+        print("URL is unreachable:", e.reason)
+        return False
+
+    except ValueError as e:
+        print("Invalid URL:", e)
         return False
         
 listing_json = load_inventory()
