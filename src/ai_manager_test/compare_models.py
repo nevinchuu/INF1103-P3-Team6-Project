@@ -19,6 +19,7 @@ from pathlib import Path
 # which "import ai_manager" needs (ai_manager.py is one folder up, in src/)
 import ai_manager_test
 import ai_manager  # noqa: E402
+import io_manager  # noqa: E402  (all output goes through the input/output layer)
 
 # (provider, model) pairs; providers are the keys of ai_manager.PROVIDERS.
 # Exact model IDs (not "-latest" aliases) so each run is repeatable.
@@ -130,17 +131,17 @@ def export_results(report: dict) -> tuple[Path, Path]:
 
 def print_summary(report: dict) -> None:
     """Prints a short side-by-side summary of each model's run."""
-    print("\n--- SUMMARY ---")
+    io_manager.display_message("\n--- SUMMARY ---")
     for r in report["models"]:
         label = f"{r['provider']}/{r['model']}"
         if "error" in r:
-            print(f"{label:<34} FAILED after {r['seconds']}s: {r['error']}")
+            io_manager.display_message(f"{label:<34} FAILED after {r['seconds']}s: {r['error']}")
             continue
         p = r["profile"]
-        print(f"{label:<34} {r['seconds']:>6}s  {r['jobs_evaluated']:>2} jobs  "
-              f"{p['highest_qualification']}, {p['years_of_experience']}y exp")
+        io_manager.display_message(f"{label:<34} {r['seconds']:>6}s  {r['jobs_evaluated']:>2} jobs  "
+                                   f"{p['highest_qualification']}, {p['years_of_experience']}y exp")
         for job in r["output"]["job_listings"]:
-            print(f"{'':<36}- {job['job_title'][:60]} ({job['company'][:30]})")
+            io_manager.display_message(f"{'':<36}- {job['job_title'][:60]} ({job['company'][:30]})")
 
 
 if __name__ == "__main__":
@@ -161,6 +162,6 @@ if __name__ == "__main__":
 
         print_summary(report)
         json_path, md_path = export_results(report)
-        print(f"\nResults exported to:\n  {json_path}\n  {md_path}")
+        io_manager.display_message(f"\nResults exported to:\n  {json_path}\n  {md_path}")
     except KeyboardInterrupt:
-        print("\nOperation cancelled by user.")
+        io_manager.display_message("\nOperation cancelled by user.")
