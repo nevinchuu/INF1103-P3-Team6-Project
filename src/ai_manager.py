@@ -37,6 +37,7 @@ import re                                        # regular expressions (text pat
 import threading                                 # Lock, to safely share data between threads
 import time                                      # sleep() while waiting to retry
 from concurrent.futures import ThreadPoolExecutor  # run several AI calls at the same time
+from datetime import date                        # today's date, so the AI can tell finished from ongoing studies
 from pathlib import Path                         # nicer file path handling
 
 # --- Installed packages (see requirements.txt) ---
@@ -298,9 +299,12 @@ def build_prompt(record: dict, task: str) -> str:
 RESUME:
 {record["resume_text"]}
 
+TODAY'S DATE: {date.today().isoformat()}
+
 RULES:
 - highest_qualification: the highest COMPLETED qualification, picked from {EDUCATION_LEVELS}.
-  Qualifications still in progress or "expected" do not count.
+  Qualifications still in progress, "expected", or ending after today's date do not count.
+  One that ended on or before today's date counts as completed.
 - qualification_detail: full name of that completed qualification.
 - years_of_experience: full-time work only, in years (decimals allowed). Internships do NOT count. 0 if none.
 - internship_months: total months of internships or attachments. 0 if none.
