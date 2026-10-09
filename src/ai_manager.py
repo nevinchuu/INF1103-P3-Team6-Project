@@ -96,6 +96,7 @@ MODEL = PROVIDERS[PROVIDER]["default_model"]
 
 # --- Tunable settings ---
 JOBS_API_URL = "https://api.mycareersfuture.gov.sg/v2/search"
+JOB_DETAILS_API_URL = "https://api.mycareersfuture.gov.sg/v2/jobs/{job_id}"
 MAX_DESCRIPTION_CHARS = 2000   # job descriptions are cut to this length to keep prompts small
 JOB_BATCH_SIZE = 10            # jobs sent to the AI per call
 JOB_FETCH_ATTEMPTS = 3         # tries per job-portal search before giving up
@@ -697,6 +698,27 @@ def fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
             "job_url": (job.get("metadata") or {}).get("jobDetailsUrl", "N/A"),
         })
     return jobs
+
+
+def fetch_job_details(job_url: str) -> dict | None:
+    """Gets one job's full description from MyCareersFuture, using the id at the end of its link.
+    Returns {"description", "listed_skills", "is_open"}, or None if it can't be fetched."""
+    # e.g. ".../job/it/data-analyst-acme-5365191b6ddd018b70f7b8149c0a20ca" -> "5365191b...20ca"
+    match = re.search(r"([0-9a-f]{32})/?(?:\?.*)?$", job_url or "")
+    if not match:
+        return None
+    try:
+        resp = requests.get(JOB_DETAILS_API_URL.format(job_id=match.group(1)), timeout=20)
+        resp.raise_for_status()
+        job = resp.json()
+    except (requests.RequestException, ValueError) as e:
+        logging.warning(f"Could not fetch job details for {job_url} ({type(e).__name__})")
+        return None
+    return {
+        "description": _clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
+        "listed_skills": [s["skill"] for s in job.get("skills", [])],
+        "is_open": ((job.get("status") or {}).get("jobStatus") or "Open") == "Open",
+    }
 
 
 # ==========================================
