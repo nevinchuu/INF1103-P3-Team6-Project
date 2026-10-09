@@ -39,7 +39,7 @@ import logging                                   # print INFO/WARNING/ERROR mess
 import os                                        # read environment variables, file paths
 import re                                        # regular expressions (text pattern matching)
 import time                                      # sleep() while waiting to retry
-from concurrent.futures import ThreadPoolExecutor, as_completed  # run several AI calls at the same time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait  # run several AI calls at the same time
 from datetime import date                        # today's date, so the AI can tell finished from ongoing studies
 from pathlib import Path                         # nicer file path handling
 
@@ -945,13 +945,20 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
     logging.info(f"Extracting requirements for {len(jobs)} unique listings in {len(batches)} batches...")
 
     # Send up to 5 batches to the AI at the same time instead of one after another.
-    # as_completed yields each batch as soon as it finishes, so progress can be reported;
-    # the results are then read back in the original batch order.
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+    # Progress is reported as each batch finishes; the results are then read back in the original
+    # batch order. Waiting in short slices (not one long wait) lets Ctrl+C stop the search right away:
+    # on Windows, Python can't react to Ctrl+C in the middle of a wait with no time limit.
+    pool = ThreadPoolExecutor(max_workers=max_workers)
+    try:
         futures = [pool.submit(extract_job_requirements, batch, profile) for batch in batches]
-        for done, _ in enumerate(as_completed(futures), start=1):
-            if on_progress:
-                on_progress("analyse", done, len(batches))
+        still_running = set(futures)
+        done = 0
+        while still_running:
+            finished, still_running = wait(still_running, timeout=0.5, return_when=FIRST_COMPLETED)
+            for _ in finished:
+                done += 1
+                if on_progress:
+                    on_progress("analyse", done, len(batches))
         records = []
         for batch, future in zip(batches, futures):
             try:
@@ -960,6 +967,11 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
                 # An unexpected error in one batch loses only that batch's listings
                 summary["batches_failed"] += 1
                 logging.error(f"A batch of {len(batch)} listings failed ({type(error).__name__}: {error}); skipping it.")
+    except BaseException:
+        # Ctrl+C or a cancelled search: don't start the queued batches, and don't wait for the running ones
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
     summary["listings_analysed"] = len(records)
     return records
 
