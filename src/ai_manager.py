@@ -907,7 +907,7 @@ def extract_job_requirements(jobs: list[dict], profile: dict) -> list[dict]:
 
 
 def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_workers: int = 5,
-                            on_progress=None) -> list[dict]:
+                            on_progress=None, summary: dict | None = None) -> list[dict]:
     """Searches the job portal with the profile's keywords and extracts each
     listing's requirements. Listings are de-duplicated by URL and sent to the AI
     in batches of JOB_BATCH_SIZE, with batches running in parallel.
@@ -915,13 +915,23 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
     on_progress (optional) lets a UI show progress. It is called as
     on_progress(stage, done, total): stage "search" after each portal search,
     "analyse" after each AI batch finishes.
+
+    summary (optional): a dict this fills in, so the caller can tell the user what happened:
+    {"searches_failed", "listings_found", "batches_failed", "listings_analysed"}.
+    A batch that fails is left out and counted; the other batches are still returned.
     """
+    if summary is None:
+        summary = {}
     # A dict keyed by URL removes duplicates: the same job found by two searches is kept once
     unique_jobs = {}
     keywords = profile["search_keywords"]
+    summary["searches_failed"] = 0
     for done, keyword in enumerate(keywords, start=1):
         logging.info(f"Searching portal for '{keyword}'...")
-        for job in fetch_jobs(keyword, limit=limit_per_search):
+        found = fetch_jobs(keyword, limit=limit_per_search)
+        if not found:
+            summary["searches_failed"] += 1  # failed, or nothing listed under that title
+        for job in found:
             if job["job_url"] != "N/A":
                 unique_jobs.setdefault(job["job_url"], job)
         if on_progress:
@@ -929,7 +939,9 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
 
     # Split into batches of 10, e.g. 40 jobs -> [jobs 0-9, 10-19, 20-29, 30-39]
     jobs = list(unique_jobs.values())
-    batches = [jobs[i:i + JOB_BATCH_SIZE] for i in range(0, len(jobs), JOB_BATCH_SIZE)]
+    batches = [jobs[start:start + JOB_BATCH_SIZE] for start in range(0, len(jobs), JOB_BATCH_SIZE)]
+    summary["listings_found"] = len(jobs)
+    summary["batches_failed"] = 0
     logging.info(f"Extracting requirements for {len(jobs)} unique listings in {len(batches)} batches...")
 
     # Send up to 5 batches to the AI at the same time instead of one after another.
@@ -940,9 +952,16 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
         for done, _ in enumerate(as_completed(futures), start=1):
             if on_progress:
                 on_progress("analyse", done, len(batches))
-        results = [future.result() for future in futures]
-    # Flatten the list of lists into one list of job records
-    return [record for batch_records in results for record in batch_records]
+        records = []
+        for batch, future in zip(batches, futures):
+            try:
+                records.extend(future.result())
+            except Exception as error:
+                # An unexpected error in one batch loses only that batch's listings
+                summary["batches_failed"] += 1
+                logging.error(f"A batch of {len(batch)} listings failed ({type(error).__name__}: {error}); skipping it.")
+    summary["listings_analysed"] = len(records)
+    return records
 
 
 def _normalise(text: str) -> str:
