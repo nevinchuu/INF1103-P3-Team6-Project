@@ -35,7 +35,7 @@ if __name__ == "__main__":
             # An unexpected error in one option returns to the menu instead of ending the program
             try:
                 if choice == io_manager.MENU_SEARCH:
-                    # 1. Input layer: resume text and job filters
+                    # ---------- 1. Input layer: resume text and job filters ----------
                     record = io_manager.collect_input()
                     if record is None:
                         io_manager.display_message("Search cancelled.")
@@ -65,7 +65,7 @@ if __name__ == "__main__":
                     if profile is None:
                         continue
 
-                    # 3. Logic layer: filter, rank and keep the top jobs
+                    # ---------- 3. Logic layer: filter, rank and keep the top jobs ----------
                     try:
                         top_jobs = logic_manager.filter_and_rank(profile, jobs, record["filters"], TOP_N)
                         removed = logic_manager.count_removed(jobs, record["filters"])
@@ -74,8 +74,8 @@ if __name__ == "__main__":
                         io_manager.display_error("Could not filter and rank the jobs. Please try a new search.")
                         continue
 
-                    # 4. Data layer: save the top jobs, skipping ones already saved.
-                    #    A failed save still shows the results.
+                    # ---------- 4. Data layer: save the top jobs, skipping ones already saved ----------
+                    # A failed save still shows the results.
                     if top_jobs:
                         try:
                             database = database_functions.read_database()
@@ -121,7 +121,7 @@ if __name__ == "__main__":
 
     except (KeyboardInterrupt, EOFError):
         # Ctrl+C, or input closed: exit cleanly instead of printing a traceback
-        print()
+        io_manager.display_message("")
 
     io_manager.display_message("Goodbye!")
     sys.exit(0)
