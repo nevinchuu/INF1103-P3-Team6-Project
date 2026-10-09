@@ -115,6 +115,7 @@ def select_top_jobs(profile, jobs, top_n):
         matched = len(job["matched_skills"])
         match_ratio = matched / len(job["required_skills"]) if job["required_skills"] else 0
         level_gap = seniority_gap(job, profile["seniority"])
+        level_gap = seniority_gap(job, profile.get("seniority_level"))
         return (experience_gap, not education_ok, -match_ratio, level_gap, -matched)
 
     return sorted(jobs, key=sort_key)[:top_n]
