@@ -36,7 +36,7 @@ import os                                        # read environment variables, f
 import re                                        # regular expressions (text pattern matching)
 import threading                                 # Lock, to safely share data between threads
 import time                                      # sleep() while waiting to retry
-from concurrent.futures import ThreadPoolExecutor  # run several AI calls at the same time
+from concurrent.futures import ThreadPoolExecutor, as_completed  # run several AI calls at the same time
 from datetime import date                        # today's date, so the AI can tell finished from ongoing studies
 from pathlib import Path                         # nicer file path handling
 
@@ -807,17 +807,26 @@ def extract_job_requirements(jobs: list[dict], profile: dict) -> list[dict]:
     return records
 
 
-def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_workers: int = 5) -> list[dict]:
+def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_workers: int = 5,
+                            on_progress=None) -> list[dict]:
     """Searches the job portal with the profile's keywords and extracts each
     listing's requirements. Listings are de-duplicated by URL and sent to the AI
-    in batches of JOB_BATCH_SIZE, with batches running in parallel."""
+    in batches of JOB_BATCH_SIZE, with batches running in parallel.
+
+    on_progress (optional) lets a UI show progress. It is called as
+    on_progress(stage, done, total): stage "search" after each portal search,
+    "analyse" after each AI batch finishes.
+    """
     # A dict keyed by URL removes duplicates: the same job found by two searches is kept once
     unique_jobs = {}
-    for keyword in profile["search_keywords"]:
+    keywords = profile["search_keywords"]
+    for done, keyword in enumerate(keywords, start=1):
         logging.info(f"Searching portal for '{keyword}'...")
         for job in fetch_jobs(keyword, limit=limit_per_search):
             if job["job_url"] != "N/A":
                 unique_jobs.setdefault(job["job_url"], job)
+        if on_progress:
+            on_progress("search", done, len(keywords))
 
     # Split into batches of 10, e.g. 40 jobs -> [jobs 0-9, 10-19, 20-29, 30-39]
     jobs = list(unique_jobs.values())
@@ -825,9 +834,14 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
     logging.info(f"Extracting requirements for {len(jobs)} unique listings in {len(batches)} batches...")
 
     # Send up to 5 batches to the AI at the same time instead of one after another.
-    # pool.map runs the function on every batch and returns the results in the same order.
+    # as_completed yields each batch as soon as it finishes, so progress can be reported;
+    # the results are then read back in the original batch order.
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        results = pool.map(lambda batch: extract_job_requirements(batch, profile), batches)
+        futures = [pool.submit(extract_job_requirements, batch, profile) for batch in batches]
+        for done, _ in enumerate(as_completed(futures), start=1):
+            if on_progress:
+                on_progress("analyse", done, len(batches))
+        results = [future.result() for future in futures]
     # Flatten the list of lists into one list of job records
     return [record for batch_records in results for record in batch_records]
 
