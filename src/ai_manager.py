@@ -698,7 +698,8 @@ def fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
     raw_jobs = None
     for attempt in range(1, JOB_FETCH_ATTEMPTS + 1):
         try:
-            resp = requests.post(JOBS_API_URL, params={"search": search_query, "limit": limit}, timeout=20)
+            # The portal reads the search words from the JSON body; in the URL they are ignored
+            resp = requests.post(JOBS_API_URL, params={"limit": limit}, json={"search": search_query}, timeout=20)
             resp.raise_for_status()  # turns HTTP errors (e.g. 500) into exceptions
             raw_jobs = resp.json().get("results", [])
             break  # success - stop retrying
