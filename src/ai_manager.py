@@ -45,7 +45,6 @@ import anthropic                  # official SDK for Claude
 import openai                     # official SDK for OpenAI (also works for Qwen and Gemini)
 import requests                   # plain HTTP requests (used for the job portal)
 from dotenv import load_dotenv    # loads the .env file into environment variables
-from openai import OpenAI
 
 # Show INFO-level messages and above in the terminal
 logging.basicConfig(level=logging.INFO)
@@ -154,7 +153,7 @@ def _record_usage(input_tokens: int, output_tokens: int) -> None:
         _usage["output_tokens"] += output_tokens
 
 
-def _get_client() -> OpenAI | anthropic.Anthropic:
+def _get_client() -> openai.OpenAI | anthropic.Anthropic:
     """Creates the API client on first use so a missing key is reported, not crashed on at import."""
     global _client
     if _client is None:
@@ -167,7 +166,7 @@ def _get_client() -> OpenAI | anthropic.Anthropic:
         if config["sdk"] == "anthropic":
             _client = anthropic.Anthropic(api_key=api_key, timeout=300, max_retries=0)
         else:
-            _client = OpenAI(api_key=api_key, base_url=config["base_url"], timeout=300, max_retries=0)
+            _client = openai.OpenAI(api_key=api_key, base_url=config["base_url"], timeout=300, max_retries=0)
         logging.info(f"Using {PROVIDER} ({MODEL})")
     return _client
 
@@ -433,7 +432,7 @@ def call_api(prompt: str, task: str) -> str | None:
     return None
 
 
-def _openai_request(client: OpenAI, prompt: str, response_format: dict) -> str | None:
+def _openai_request(client: openai.OpenAI, prompt: str, response_format: dict) -> str | None:
     """One request through the OpenAI client (Qwen, Gemini, OpenAI)."""
     params = {
         "model": MODEL,
@@ -582,13 +581,6 @@ def parse_response(raw: str | None) -> dict | None:
     return data
 
 
-def _match_enum(value: str, options: list[str]) -> str | None:
-    """Returns the canonical option matching value, ignoring case and surrounding spaces."""
-    # e.g. "diploma" -> "Diploma", "  Bachelor's " -> "Bachelor's", "PhD" -> None (not an option)
-    lookup = {o.lower(): o for o in options}
-    return lookup.get(value.strip().lower())
-
-
 def _validate_value(value, spec: dict, name: str, path: str):
     """Validates one value against its schema spec and returns the cleaned value.
     Raises ValueError describing the first problem found.
@@ -604,7 +596,8 @@ def _validate_value(value, spec: dict, name: str, path: str):
             raise ValueError(f"{path} should be a string, got {value!r}")
         value = value.strip()
         if "enum" in spec:
-            matched = _match_enum(value, spec["enum"])
+            # Match the allowed option ignoring case, e.g. "diploma" -> "Diploma", "PhD" -> None
+            matched = {option.lower(): option for option in spec["enum"]}.get(value.lower())
             if matched is None:
                 raise ValueError(f"{path}={value!r} is not one of {spec['enum']}")
             value = matched
