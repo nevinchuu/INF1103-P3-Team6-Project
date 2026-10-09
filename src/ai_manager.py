@@ -22,6 +22,9 @@ HOW THEY FLOW
 3. AI calls #2+: batches of 10 jobs -> job records         (sections 2-4, 6)
       e.g. required skills, min education, which of your skills match, a reason
 
+Separately, tailor_resume(resume_text, job) rewrites a resume for one job (1 AI call),
+and fetch_job_details(job_url) gets that job's full description from the portal.
+
 EVERY AI CALL GOES THROUGH THE SAME FOUR STEPS (run_task)
 ---------------------------------------------------------
 build_prompt -> call_api -> parse_response -> validate_response
@@ -895,3 +898,79 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
         results = [future.result() for future in futures]
     # Flatten the list of lists into one list of job records
     return [record for batch_records in results for record in batch_records]
+
+
+def _normalise(text: str) -> str:
+    """Lowercase, one kind of dash, single spaces: "Jan 2024 – Present" and "jan 2024 - present" match."""
+    text = re.sub(r"[‐-―−]", "-", text.lower())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _ground_tailored_resume(tailored: dict, resume_text: str) -> tuple[dict, list[str], list[str]]:
+    """The anti-hallucination check for tailor_resume: removes anything the original resume
+    doesn't contain. Returns (resume, skills removed, notes about other removals).
+
+    Name, contact details, skills, organisations and dates must appear in the resume text
+    as whole words (so a skill "C" is not "found" inside "Excel").
+    The summary and bullets may be reworded, but every number in them (e.g. "30%", "2,000")
+    must be a whole number in the resume (so "15" is not "found" inside a phone number).
+    Known limit: a real number reused for a different claim still passes, e.g. "2 dashboards"
+    when the resume only says "2-week sprint".
+    """
+    def numbers_in(text: str) -> set[str]:
+        # Every whole number, without commas: "2,000 users, 15%" -> {"2000", "15"}
+        return {number.replace(",", "") for number in re.findall(r"\d+(?:[.,]\d+)*", text)}
+
+    source = _normalise(resume_text)
+    source_numbers = numbers_in(source)
+
+    def found(text: str) -> bool:
+        # Whole words only: "SQL" is found in "SQL, Excel", but "Java" is not found in "JavaScript"
+        return re.search(rf"(?<!\w){re.escape(_normalise(text))}(?!\w)", source) is not None
+
+    def numbers_found(text: str) -> bool:
+        return numbers_in(text) <= source_numbers  # <= on sets: every number is in the resume
+
+    notes = []
+    if tailored["name"] and not found(tailored["name"]):
+        tailored["name"] = ""
+    contact_parts = re.split(r"\s*[·|•]\s*", tailored["contact"])
+    tailored["contact"] = " · ".join(part for part in contact_parts if part and found(part))
+
+    removed_skills = [skill for skill in tailored["skills"] if not found(skill)]
+    tailored["skills"] = [skill for skill in tailored["skills"] if found(skill)]
+
+    if not numbers_found(tailored["summary"]):
+        notes.append("The summary was left out because it had a number that isn't in your resume.")
+        tailored["summary"] = ""
+
+    for section in tailored["sections"]:
+        kept = []
+        for entry in section["entries"]:
+            where = entry["organisation"] or entry["title"]
+            if not where or not found(where):
+                notes.append(f'Left out "{entry["title"] or entry["organisation"]}": it isn\'t in your resume.')
+                continue
+            if entry["dates"] and not found(entry["dates"]):
+                entry["dates"] = ""
+            bullets = [bullet for bullet in entry["bullets"] if numbers_found(bullet)]
+            dropped = len(entry["bullets"]) - len(bullets)
+            if dropped:
+                notes.append(f'Left out {dropped} point(s) under "{entry["title"]}" with numbers that '
+                             f"aren't in your resume.")
+            entry["bullets"] = bullets
+            kept.append(entry)
+        section["entries"] = kept
+    tailored["sections"] = [section for section in tailored["sections"] if section["entries"]]
+    return tailored, removed_skills, notes
+
+
+def tailor_resume(resume_text: str, job: dict) -> dict | None:
+    """Rewrites a resume for one job (1 AI call), keeping only facts from the original.
+    job is a job record, ideally with "description" from fetch_job_details.
+    Returns {"resume": TAILORED_RESUME_SCHEMA record, "removed_skills", "notes"}, or None."""
+    result = run_task({"resume_text": resume_text, "job": job}, "tailored_resume")
+    if result is None:
+        return None
+    resume, removed_skills, notes = _ground_tailored_resume(result, resume_text)
+    return {"resume": resume, "removed_skills": removed_skills, "notes": notes}
