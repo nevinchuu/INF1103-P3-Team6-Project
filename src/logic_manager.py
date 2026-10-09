@@ -1,3 +1,4 @@
+from collections import Counter
 from urllib.parse import urlparse
 
 # Ordered lowest to highest, so a list index works as an education level number.
@@ -125,3 +126,18 @@ def filter_and_rank(profile, jobs, filters, top_n=5):
         if passes_filters(job, filters):
             kept.append(job)
     return select_top_jobs(profile, kept, top_n)
+
+
+# The skills missing from the most jobs, as [(skill, number of jobs)], most common first.
+# Only skills missing from 2 or more jobs; "SQL" and "sql" count as one skill
+def find_skill_gaps(jobs):
+    counts = Counter()
+    names = {}  # lowercase skill -> how it was first written
+    for job in jobs:
+        job_skills = set()  # each skill counted once per job
+        for skill in job.get("missing_skills", []):
+            key = skill.strip().lower()
+            names.setdefault(key, skill.strip())
+            job_skills.add(key)
+        counts.update(job_skills)
+    return [(names[key], count) for key, count in counts.most_common(SKILL_GAP_LIMIT) if count >= 2]
