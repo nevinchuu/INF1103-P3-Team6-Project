@@ -1,0 +1,18 @@
+# Docker builds from the project root (docker build -f docker/Dockerfile .),
+# so this file must live in the project root to take effect.
+
+# Secrets: pass API keys at run time instead (docker run --env-file .env ...)
+.env
+
+# Not needed inside the image
+.git/
+.github/
+.vscode/
+.venv/
+__pycache__/
+*.pyc
+
+# Saved jobs and test output belong to each machine, not the image
+data/
+results/
+output_results/
