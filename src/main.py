@@ -65,7 +65,37 @@ if __name__ == "__main__":
                     if profile is None:
                         continue
 
-                    io_manager.display_result(profile, jobs)
+                    # 3. Logic layer: filter, rank and keep the top jobs
+                    try:
+                        top_jobs = logic_manager.filter_and_rank(profile, jobs, record["filters"], TOP_N)
+                        removed = logic_manager.count_removed(jobs, record["filters"])
+                    except Exception as error:
+                        logging.error(f"Filtering and ranking failed ({type(error).__name__}: {error})")
+                        io_manager.display_error("Could not filter and rank the jobs. Please try a new search.")
+                        continue
+
+                    # 4. Data layer: save the top jobs, skipping ones already saved.
+                    #    A failed save still shows the results.
+                    if top_jobs:
+                        try:
+                            database = database_functions.read_database()
+                            database = database_functions.insert_no_duplicates(top_jobs, database)
+                            database_functions.write_database(database)
+                        except Exception as error:
+                            logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
+                            io_manager.display_error("Your results could not be saved, but they are shown below.")
+
+                    io_manager.display_result(profile, top_jobs)
+
+                    # What the logic layer did, e.g. "Checked 26 jobs: 22 removed by your
+                    # filters (14 salary, 8 job type). Showing the best 4."
+                    total_removed = sum(removed.values())
+                    if total_removed == 0:
+                        summary = f"Checked {len(jobs)} jobs: none removed by your filters."
+                    else:
+                        details = ", ".join(f"{count} {reason}" for reason, count in removed.items())
+                        summary = f"Checked {len(jobs)} jobs: {total_removed} removed by your filters ({details})."
+                    io_manager.display_message(f"\n{summary} Showing the best {len(top_jobs)}.")
 
             except EOFError:
                 raise  # input was closed: let the handler below exit cleanly
