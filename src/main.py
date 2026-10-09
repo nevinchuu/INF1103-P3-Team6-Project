@@ -158,15 +158,19 @@ if __name__ == "__main__":
 
                     io_manager.display_result(profile, top_jobs)
 
-                    # What the logic layer did, e.g. "Checked 26 jobs: 22 removed by your
-                    # filters (14 salary, 8 job type). Showing the best 4."
+                    # Where the jobs came from and what the logic layer did, e.g. "Checked 26 listings:
+                    # up to 10 from each of 3 MyCareersFuture searches (Data Analyst, ...).
+                    # 22 removed by your filters (14 salary, 8 job type). Showing the best 4."
+                    keywords = profile["search_keywords"]
+                    source = (f"Checked {len(jobs)} listings: up to {JOBS_PER_SEARCH} from each of {len(keywords)} "
+                              f"MyCareersFuture searches ({', '.join(keywords)}).")
                     total_removed = sum(removed.values())
                     if total_removed == 0:
-                        summary = f"Checked {len(jobs)} jobs: none removed by your filters."
+                        summary_text = "None removed by your filters."
                     else:
                         details = ", ".join(f"{count} {reason}" for reason, count in removed.items())
-                        summary = f"Checked {len(jobs)} jobs: {total_removed} removed by your filters ({details})."
-                    io_manager.display_message(f"\n{summary} Showing the best {len(top_jobs)}.")
+                        summary_text = f"{total_removed} removed by your filters ({details})."
+                    io_manager.display_message(f"\n{source} {summary_text} Showing the best {len(top_jobs)}.")
 
                 else:
                     # ---------- Show my last results / View one job in detail (data layer) ----------
