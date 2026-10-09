@@ -74,6 +74,8 @@ if __name__ == "__main__":
                     if record is None:
                         io_manager.display_message("Search cancelled.")
                         continue
+                    resume_name = os.path.basename(record["resume_path"])
+                    logging.info(f"event=search stage=input outcome=ok resume={resume_name} filters={record['filters']}")
 
                     # 2. AI layer: the profile is completed with prompt_missing_data BEFORE the
                     #    job search, so skills the user types in are used when matching jobs.
@@ -116,9 +118,8 @@ if __name__ == "__main__":
                     # A failed save still shows the results, and session_jobs keeps them for this session
                     if top_jobs:
                         try:
-                            database = database_functions.read_database()
-                            database = database_functions.insert_no_duplicates(top_jobs, database)
-                            database_functions.write_database(database)
+                            newly_saved = database_functions.save_new_jobs(top_jobs, resume_name)
+                            logging.info(f"event=search stage=save outcome=ok new={newly_saved}")
                         except Exception as error:
                             logging.error(f"event=search stage=save outcome=failed error={type(error).__name__}: {error}")
                             io_manager.display_error("Your results could not be saved, but they are shown below and "
