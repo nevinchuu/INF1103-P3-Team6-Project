@@ -29,6 +29,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
 import ai_manager  # noqa: E402 (import after the sys.path change above)
+import io_manager  # noqa: E402  (all output goes through the input/output layer)
 
 TOP_N_RESULTS = 10  # job listings in the final output
 OUTPUT_DIR = Path(__file__).resolve().parent / "output_results"  # src/ai_manager_test/output_results
@@ -71,11 +72,11 @@ def get_resume_file_path(data_root: str) -> str:
         filename = input("\nEnter the PDF resume filename in Data/")
 
         if not filename:
-            print("Filename cannot be empty. Please try again.")
+            io_manager.display_message("Filename cannot be empty. Please try again.")
             continue
 
         if not filename.lower().endswith(".pdf"):
-            print("Please provide a valid PDF filename (e.g., 'resume.pdf').")
+            io_manager.display_message("Please provide a valid PDF filename (e.g., 'resume.pdf').")
             continue
 
         # Connects the path to the data folder and the filename provided by user
@@ -86,11 +87,11 @@ def get_resume_file_path(data_root: str) -> str:
             if not os.path.exists(target_path):
                 raise FileNotFoundError(f"Resume file not found at: {target_path}")
 
-            print(f"Resume file found: {target_path}")
+            io_manager.display_message(f"Resume file found: {target_path}")
             return target_path
 
         except FileNotFoundError as e:
-            print(f"Exception occurred: {e}")
+            io_manager.display_message(f"Exception occurred: {e}")
 
 
 # ==========================================
@@ -182,7 +183,7 @@ if __name__ == "__main__":
 
         # Rank, keep the top 10, convert to the required format, print and save
         output = format_output(profile, select_top_jobs(profile, jobs))
-        print(json.dumps(output, indent=2))
-        print(f"\nSaved to {save_output(output)}")
+        io_manager.display_message(json.dumps(output, indent=2))
+        io_manager.display_message(f"\nSaved to {save_output(output)}")
     except KeyboardInterrupt:  # Ctrl+C
-        print("\nOperation cancelled by user.")
+        io_manager.display_message("\nOperation cancelled by user.")
