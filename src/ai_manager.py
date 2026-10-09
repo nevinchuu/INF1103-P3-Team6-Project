@@ -110,6 +110,7 @@ JOB_FETCH_ATTEMPTS = 3         # tries per job-portal search before giving up
 RATE_LIMIT_RETRIES = 3         # retries per AI call when the provider is busy
 MALFORMED_RESPONSE_RETRIES = 1 # extra tries when a reply isn't valid JSON or fails the schema check
 API_TIMEOUT_SECONDS = 90       # longest wait for one AI reply before it counts as a failed try
+MAX_RESUME_CHARS = 20000       # longer resume text is cut, so a huge file can't overflow the AI's input limit
 MAX_RATE_LIMIT_WAIT = 90  # longer suggested waits usually mean the daily quota is used up
 
 # The API client object. Starts empty and is created the first time it's needed (_get_client).
@@ -828,9 +829,16 @@ def fetch_job_details(job_url: str) -> dict | None:
 # main.py and web_app.py need extract_candidate_profile and search_and_extract_jobs.
 # ==========================================
 
+def _capped_resume(resume_text: str) -> str:
+    """The resume text, cut to MAX_RESUME_CHARS so a very long file can't overflow the AI's input limit."""
+    if len(resume_text) > MAX_RESUME_CHARS:
+        logging.warning(f"Resume text is {len(resume_text)} characters; using the first {MAX_RESUME_CHARS}.")
+    return resume_text[:MAX_RESUME_CHARS]
+
+
 def extract_candidate_profile(resume_text: str) -> dict | None:
     """Returns a validated candidate record (see CANDIDATE_SCHEMA), or None."""
-    return run_task({"resume_text": resume_text}, "candidate_profile")
+    return run_task({"resume_text": _capped_resume(resume_text)}, "candidate_profile")
 
 
 def _ground_skill_matches(requirements: dict, candidate_skills: list[str]) -> dict:
@@ -993,7 +1001,7 @@ def tailor_resume(resume_text: str, job: dict) -> dict | None:
     """Rewrites a resume for one job (1 AI call), keeping only facts from the original.
     job is a job record, ideally with "description" from fetch_job_details.
     Returns {"resume": TAILORED_RESUME_SCHEMA record, "removed_skills", "notes"}, or None."""
-    result = run_task({"resume_text": resume_text, "job": job}, "tailored_resume")
+    result = run_task({"resume_text": _capped_resume(resume_text), "job": job}, "tailored_resume")
     if result is None:
         return None
     resume, removed_skills, notes = _ground_tailored_resume(result, resume_text)
