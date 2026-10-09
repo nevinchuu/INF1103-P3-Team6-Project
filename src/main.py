@@ -70,7 +70,7 @@ if __name__ == "__main__":
             try:
                 if choice == io_manager.MENU_SEARCH:
                     # ---------- 1. Input layer: resume text and job filters ----------
-                    record = io_manager.collect_input()
+                    record = io_manager.collect_input(ai_manager.provider_name())
                     if record is None:
                         io_manager.display_message("Search cancelled.")
                         continue
