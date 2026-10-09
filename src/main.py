@@ -9,6 +9,12 @@ The other layers only contain functions; this file defines none and only calls t
 Run from the project root:
 
     python src/main.py
+    
+Each step of a search recovers on its own, so a failure never loses the work before it:
+  - the resume profile is kept if the job search fails, so "Try again?" only repeats the search
+  - a failed save still shows the results, and keeps them for "Show my last results" this session
+  - Ctrl+C during a search cancels that search and returns to the menu; at the menu it exits
+Warnings and errors appear in the terminal; everything, including INFO, goes to logs/job_matcher.log.
 """
 
 import logging
