@@ -87,7 +87,8 @@ def run_model(resume_text: str, provider: str, model: str) -> dict:
     ai_manager.set_provider(provider, model)
     ai_manager.reset_usage()
     start = time.perf_counter()
-    profile, jobs = ai_manager.run_ai_pipeline(resume_text)
+    profile = ai_manager.extract_candidate_profile(resume_text)
+    jobs = ai_manager.search_and_extract_jobs(profile) if profile is not None else []
     seconds = round(time.perf_counter() - start, 1)
 
     usage = ai_manager.get_usage()

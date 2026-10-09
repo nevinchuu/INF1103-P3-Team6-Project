@@ -5,16 +5,17 @@ All pass/fail decisions, scoring and filtering belong in logic_manager.
 Reading the resume file belongs to the input manager. To try this module on its
 own, run src/ai_manager_test/ai_manager_test.py.
 
-WHAT main.py CALLS
-------------------
-profile, jobs = run_ai_pipeline(resume_text)
+WHAT main.py AND web_app.py CALL
+--------------------------------
+profile = extract_candidate_profile(resume_text)
   resume_text: plain text of the resume (from the input manager)
   profile:     candidate record (CANDIDATE_SCHEMA), or None if extraction failed
+jobs = search_and_extract_jobs(profile)
   jobs:        list of job records (portal facts + AI-extracted requirements)
 Hand both to logic_manager.
 
-HOW run_ai_pipeline FLOWS
--------------------------
+HOW THEY FLOW
+-------------
 1. AI call #1: resume text -> candidate record             (sections 2-4, 6)
       e.g. qualification, years of experience, skills, job titles to search for
 2. Search MyCareersFuture for each job title               (section 5)
@@ -740,7 +741,7 @@ def fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
 # 6. PUBLIC FUNCTIONS FOR OTHER MODULES
 # These tie sections 1-5 together. Other files (main.py, and the scripts in
 # src/ai_manager_test/) should call these rather than the lower-level functions above.
-# main.py normally only needs run_ai_pipeline.
+# main.py and web_app.py need extract_candidate_profile and search_and_extract_jobs.
 # ==========================================
 
 def extract_candidate_profile(resume_text: str) -> dict | None:
@@ -837,12 +838,3 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
         results = [future.result() for future in futures]
     # Flatten the list of lists into one list of job records
     return [record for batch_records in results for record in batch_records]
-
-
-def run_ai_pipeline(resume_text: str, limit_per_search: int = 10) -> tuple[dict | None, list[dict]]:
-    """Resume text in, (candidate record, list of job records) out. Hand both to logic_manager."""
-    profile = extract_candidate_profile(resume_text)
-    if profile is None:
-        logging.error("Could not extract candidate profile.")
-        return None, []
-    return profile, search_and_extract_jobs(profile, limit_per_search=limit_per_search)

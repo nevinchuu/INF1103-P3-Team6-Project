@@ -175,11 +175,12 @@ def save_output(output: dict) -> Path:
 
 if __name__ == "__main__":
     try:
-        # Read the resume, then hand the text to the AI manager - the same call main.py will make
+        # Read the resume, then hand the text to the AI manager - the same calls main.py makes
         resume_text = read_resume_file(get_resume_file_path(get_data_root()))
-        profile, jobs = ai_manager.run_ai_pipeline(resume_text)
+        profile = ai_manager.extract_candidate_profile(resume_text)
         if profile is None:
             raise SystemExit("Could not extract candidate profile; see errors above.")
+        jobs = ai_manager.search_and_extract_jobs(profile)
 
         # Rank, keep the top 10, convert to the required format, print and save
         output = format_output(profile, select_top_jobs(profile, jobs))
