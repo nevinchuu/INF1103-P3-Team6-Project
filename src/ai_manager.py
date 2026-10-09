@@ -130,6 +130,11 @@ def set_provider(provider: str, model: str | None = None) -> None:
     _client = None
 
 
+def provider_name() -> str:
+    """The AI service in use, as people know it, e.g. "Google Gemini" (for the privacy notice)."""
+    return PROVIDERS[PROVIDER]["label"]
+
+
 # Runs once when this file is loaded: pick the provider/model from .env (or the defaults)
 set_provider(os.getenv("AI_PROVIDER", DEFAULT_PROVIDER), os.getenv("AI_MODEL"))
 
