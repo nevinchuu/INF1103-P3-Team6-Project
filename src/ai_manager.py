@@ -242,10 +242,49 @@ JOB_BATCH_SCHEMA = {
     "additionalProperties": False,
 }
 
-# The two kinds of AI call this module makes, and the schema each one uses
+# One entry in a resume section, e.g. a job, a course or a project
+RESUME_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "description": "e.g. 'Data Analyst Intern' or 'Diploma in Information Technology'"},
+        "organisation": {"type": "string", "description": "Company, school or group. Empty string if none."},
+        "dates": {"type": "string", "description": "Copied exactly from the resume. Empty string if none."},
+        "bullets": STRING_LIST,
+    },
+    "required": ["title", "organisation", "dates", "bullets"],
+    "additionalProperties": False,
+}
+
+# A resume rewritten for one job (tailor_resume). Checked against the original resume
+# afterwards (_ground_tailored_resume), so nothing the candidate didn't write gets through.
+TAILORED_RESUME_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "contact": {"type": "string", "description": "Email, phone and links from the resume, separated by ' · '"},
+        "summary": {"type": "string", "description": "2-3 sentences written for this job"},
+        "skills": {**STRING_LIST, "description": "Skills from the resume, most relevant to the job first"},
+        "sections": {
+            "type": "array",
+            "description": "The resume's sections, e.g. Experience, Education, Projects, most relevant first",
+            "items": {
+                "type": "object",
+                "properties": {"heading": {"type": "string"}, "entries": {"type": "array", "items": RESUME_ENTRY_SCHEMA}},
+                "required": ["heading", "entries"],
+                "additionalProperties": False,
+            },
+        },
+        "changes": {**STRING_LIST, "description": "3-6 short notes on what was changed for this job and why"},
+    },
+    "required": ["name", "contact", "summary", "skills", "sections", "changes"],
+    "additionalProperties": False,
+}
+
+# The kinds of AI call this module makes, and the schema each one uses
 TASKS = {
     "candidate_profile": CANDIDATE_SCHEMA,
     "job_requirements": JOB_BATCH_SCHEMA,
+    "tailored_resume": TAILORED_RESUME_SCHEMA,
 }
 
 # Range checks applied by validate_response (inclusive)
@@ -264,6 +303,7 @@ def build_prompt(record: dict, task: str) -> str:
 
     candidate_profile: record = {"resume_text": str}
     job_requirements:  record = {"jobs": list[dict], "candidate": dict (candidate record)}
+    tailored_resume:   record = {"resume_text": str, "job": dict (job record, with description if known)}
     """
     if task == "candidate_profile":
         # f"""...""" is a multi-line f-string: {...} parts are replaced with values
@@ -335,6 +375,39 @@ RULES (apply to each job separately):
   qualification compare with this job's requirements, naming the key matches and gaps.
   State facts only; do not say whether they should apply.
 - Use only facts in the posting and candidate details. Do not invent anything.
+
+Return JSON only."""
+
+    if task == "tailored_resume":
+        job = record["job"]
+        return f"""Rewrite this candidate's resume so it is tailored to the job below.
+
+JOB:
+Title: {job.get('title')}
+Company: {job.get('company')}
+Key skills: {', '.join(job.get('required_skills', [])) or 'Not known'}
+Listed skills: {', '.join(job.get('listed_skills', [])) or 'None'}
+Description: {job.get('description') or 'Not available'}
+
+RESUME:
+{record["resume_text"]}
+
+RULES:
+- Use ONLY facts in the resume. Never add a skill, tool, employer, job title, qualification, date,
+  number or achievement that is not in the resume, even if the job asks for it. Leave gaps out.
+- name and contact: copied exactly from the resume (contact: email, phone, links, separated by " · ").
+  Empty string if the resume has none.
+- summary: 2-3 sentences aimed at this job, using only facts from the resume. No numbers that are not in it.
+- skills: skill names copied exactly as written in the resume, most relevant to this job first.
+  Only if there are more than 15, leave out the ones that do not help with this job.
+- sections: the resume's sections (e.g. Experience, Education, Projects, Certifications, Leadership),
+  most relevant to this job first. Keep every job and qualification.
+  For each entry, copy title, organisation and dates exactly as written in the resume.
+  bullets: rewrite to show what matters for this job: start with an action verb, put the most relevant
+  first, use the job's key skill words only where the resume shows that skill, and keep any numbers exactly.
+  You may shorten or drop bullets that do not help with this job.
+- changes: 3-6 short notes on what you changed and why,
+  e.g. "Moved SQL to the top of Skills because the job asks for it".
 
 Return JSON only."""
 
