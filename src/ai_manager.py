@@ -64,6 +64,7 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 # temperature=0.0 makes answers as consistent as possible between runs.
 PROVIDERS = {
     "qwen": {
+        "label": "Alibaba Qwen",          # name shown to users, e.g. in the privacy notice
         "sdk": "openai",                  # which client library to use
         "key_env": "QWEN_API_KEY",        # name of the .env variable holding the API key
         "base_url": "https://ws-jqxl73dgs75w9q92.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
@@ -71,6 +72,7 @@ PROVIDERS = {
         "temperature": 0.0,
     },
     "gemini": {
+        "label": "Google Gemini",
         "sdk": "openai",
         "key_env": "GEMINI_API_KEY",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -78,6 +80,7 @@ PROVIDERS = {
         "temperature": 0.0,
     },
     "openai": {
+        "label": "OpenAI",
         "sdk": "openai",
         "key_env": "OPENAI_API_KEY",
         "base_url": None,                 # None = OpenAI's own servers
@@ -85,6 +88,7 @@ PROVIDERS = {
         "temperature": None,
     },
     "anthropic": {
+        "label": "Anthropic Claude",
         "sdk": "anthropic",
         "key_env": "ANTHROPIC_API_KEY",
         "default_model": "claude-opus-5-5",
