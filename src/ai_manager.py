@@ -756,49 +756,62 @@ def _clean_html(text: str) -> str:
 
 def fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
     """Fetches job listings from MyCareersFuture. No filtering is done here.
-    Retries timeouts and server errors; returns an empty list if every attempt fails."""
+    Retries timeouts, server errors and replies in an unexpected format; returns an empty list
+    if every attempt fails. A single listing in an unexpected format is skipped, not fatal."""
     raw_jobs = None
     for attempt in range(1, JOB_FETCH_ATTEMPTS + 1):
         try:
             # The portal reads the search words from the JSON body; in the URL they are ignored
             resp = requests.post(JOBS_API_URL, params={"limit": limit}, json={"search": search_query}, timeout=20)
             resp.raise_for_status()  # turns HTTP errors (e.g. 500) into exceptions
-            raw_jobs = resp.json().get("results", [])
+            data = resp.json()
+            raw_jobs = data.get("results") if isinstance(data, dict) else None
+            if not isinstance(raw_jobs, list):
+                raise ValueError(f"unexpected reply format ({type(data).__name__})")
             break  # success - stop retrying
-        except (requests.RequestException, ValueError) as e:
+        except (requests.RequestException, ValueError) as error:
             if attempt == JOB_FETCH_ATTEMPTS:
-                logging.error(f"Job search for '{search_query}' failed after {attempt} attempts: {e}")
+                logging.error(f"Job search for '{search_query}' failed after {attempt} attempts: {error}")
                 return []
-            logging.warning(f"Job search for '{search_query}' failed ({type(e).__name__}); retrying...")
+            logging.warning(f"Job search for '{search_query}' failed ({type(error).__name__}); retrying...")
             time.sleep(2 * attempt)  # wait a little longer each time: 2s, then 4s
 
+    jobs = []
+    for job in raw_jobs:
+        try:
+            jobs.append(_listing_from_portal(job))
+        except (AttributeError, KeyError, TypeError) as error:
+            logging.warning(f"Skipped a '{search_query}' listing in an unexpected format "
+                            f"({type(error).__name__}: {error})")
+    return jobs
+
+
+def _listing_from_portal(job: dict) -> dict:
+    """One portal listing as a job record with simple names. Raises AttributeError, KeyError
+    or TypeError if the listing isn't in the expected format."""
     # The portal returns lots of nested data; keep only the fields we use, with simple names.
     # "x.get(key) or {}" means: use the value if present, otherwise an empty dict, so missing
     # data doesn't crash the program.
-    jobs = []
-    for job in raw_jobs:
-        company = (job.get("hiringCompany") or job.get("postedCompany") or {}).get("name")
-        salary = job.get("salary") or {}
-        districts = (job.get("address") or {}).get("districts") or []
-
-        jobs.append({
-            "title": job.get("title", "N/A"),
-            "company": company or "N/A",
-            "location": districts[0]["location"] if districts else "Singapore",
-            "min_salary": salary.get("minimum", 0),
-            "max_salary": salary.get("maximum", 0),
-            "salary_period": ((salary.get("type") or {}).get("salaryType") or "Monthly").lower(),
-            "employment_types": [e["employmentType"] for e in job.get("employmentTypes", [])],
-            "position_levels": [p["position"] for p in job.get("positionLevels", [])],
-            "min_years_experience": job.get("minimumYearsExperience") or 0,
-            "flexible_work_arrangements": [
-                f["flexibleWorkArrangement"] for f in job.get("flexibleWorkArrangements") or []
-            ],
-            "listed_skills": [s["skill"] for s in job.get("skills", [])],
-            "description": _clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
-            "job_url": (job.get("metadata") or {}).get("jobDetailsUrl", "N/A"),
-        })
-    return jobs
+    company = (job.get("hiringCompany") or job.get("postedCompany") or {}).get("name")
+    salary = job.get("salary") or {}
+    districts = (job.get("address") or {}).get("districts") or []
+    return {
+        "title": job.get("title", "N/A"),
+        "company": company or "N/A",
+        "location": districts[0]["location"] if districts else "Singapore",
+        "min_salary": salary.get("minimum", 0),
+        "max_salary": salary.get("maximum", 0),
+        "salary_period": ((salary.get("type") or {}).get("salaryType") or "Monthly").lower(),
+        "employment_types": [employment["employmentType"] for employment in job.get("employmentTypes", [])],
+        "position_levels": [level["position"] for level in job.get("positionLevels", [])],
+        "min_years_experience": job.get("minimumYearsExperience") or 0,
+        "flexible_work_arrangements": [
+            arrangement["flexibleWorkArrangement"] for arrangement in job.get("flexibleWorkArrangements") or []
+        ],
+        "listed_skills": [skill["skill"] for skill in job.get("skills", [])],
+        "description": _clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
+        "job_url": (job.get("metadata") or {}).get("jobDetailsUrl", "N/A"),
+    }
 
 
 def fetch_job_details(job_url: str) -> dict | None:
