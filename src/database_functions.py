@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 json_database = []
 
@@ -15,34 +16,34 @@ def read_database():
             data = json.load(file)
             return data
 
-    # if failure or database doesnt exist, creates it and writes a placeholder entry into it
-    except:
+    # if the database doesnt exist yet, creates it with an empty list
+    except FileNotFoundError:
         os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
         with open(DATABASE_PATH, "w", encoding="utf-8") as file:
             json.dump(temp_arr, file)
             return temp_arr
 
+    # if the database is corrupted, keep it as a dated backup instead of overwriting it,
+    # e.g. job_listings.json.20261009-153000.bak, then start again with an empty list
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        os.replace(DATABASE_PATH, f"{DATABASE_PATH}.{time.strftime('%Y%m%d-%H%M%S')}.bak")
+        return temp_arr
 
+
+# any error is raised to the caller (main.py / web_app.py), which tells the user the save failed
 def write_database(to_write):
 
-    # try to write database if fails, writes empty array
-    try:
+    # create IDs for entries before writing to database
+    to_write = reorder_ids(to_write)
 
-        # create IDs for entries before writing to database
-        to_write = reorder_ids(to_write)
-
-        # dump all listings into a json file for storage (indent=2 keeps the file readable)
-        os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
-        with open(DATABASE_PATH, "w", encoding="utf-8") as file:
-            json.dump(to_write, file, indent=2)
-            return
-
-    # catch any errors, write empty array instead if error exists
-    except:
-        to_write = []
-        with open(DATABASE_PATH, "w", encoding="utf-8") as file:
-            json.dump(to_write, file)
-            return
+    # write to a temporary file first, then swap it in. If writing fails part way,
+    # the old database is left untouched instead of being emptied or half-written
+    # (indent=2 keeps the file readable)
+    os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
+    temp_path = DATABASE_PATH + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(to_write, file, indent=2)
+    os.replace(temp_path, DATABASE_PATH)
 
 # iterate through array of jsons
 def display_database(to_print):
