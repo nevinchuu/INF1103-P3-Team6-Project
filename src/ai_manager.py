@@ -35,7 +35,6 @@ import json                                      # convert between JSON text and
 import logging                                   # print INFO/WARNING/ERROR messages
 import os                                        # read environment variables, file paths
 import re                                        # regular expressions (text pattern matching)
-import threading                                 # Lock, to safely share data between threads
 import time                                      # sleep() while waiting to retry
 from concurrent.futures import ThreadPoolExecutor, as_completed  # run several AI calls at the same time
 from datetime import date                        # today's date, so the AI can tell finished from ongoing studies
@@ -125,33 +124,6 @@ def set_provider(provider: str, model: str | None = None) -> None:
 
 # Runs once when this file is loaded: pick the provider/model from .env (or the defaults)
 set_provider(os.getenv("AI_PROVIDER", DEFAULT_PROVIDER), os.getenv("AI_MODEL"))
-
-
-# Token usage across all AI calls since the last reset_usage(); batches run in
-# parallel threads, so updates are locked.
-# Why a lock: two threads doing "_usage['requests'] += 1" at the same moment can
-# overwrite each other's update. "with _usage_lock:" lets only one thread in at a time.
-# ai_manager_test/compare_models.py uses these to work out the cost of a run.
-_usage_lock = threading.Lock()
-_usage = {"requests": 0, "input_tokens": 0, "output_tokens": 0}
-
-
-def reset_usage() -> None:
-    with _usage_lock:
-        _usage.update(requests=0, input_tokens=0, output_tokens=0)
-
-
-def get_usage() -> dict:
-    """Returns {requests, input_tokens, output_tokens}. Output includes thinking/reasoning tokens."""
-    with _usage_lock:
-        return dict(_usage)  # return a copy so callers can't accidentally change the totals
-
-
-def _record_usage(input_tokens: int, output_tokens: int) -> None:
-    with _usage_lock:
-        _usage["requests"] += 1
-        _usage["input_tokens"] += input_tokens
-        _usage["output_tokens"] += output_tokens
 
 
 def _get_client() -> openai.OpenAI | anthropic.Anthropic:
@@ -446,15 +418,6 @@ def _openai_request(client: openai.OpenAI, prompt: str, response_format: dict) -
     # **params unpacks the dict into keyword arguments: model=..., messages=..., ...
     completion = client.chat.completions.create(**params)
 
-    # Record how many tokens this call used (for cost tracking)
-    usage = completion.usage
-    if usage:
-        input_tokens = usage.prompt_tokens or 0
-        # Some providers leave thinking tokens out of completion_tokens but count them
-        # in total_tokens; both are billed as output
-        output_tokens = max(usage.completion_tokens or 0, (usage.total_tokens or 0) - input_tokens)
-        _record_usage(input_tokens, output_tokens)
-
     choice = completion.choices[0]
     if not choice.message.content:
         logging.error(f"Empty response from {PROVIDER} ({MODEL}); finish_reason={choice.finish_reason}")
@@ -482,7 +445,6 @@ def _anthropic_request(client: anthropic.Anthropic, prompt: str, task: str) -> s
             **params, betas=["server-side-fallback-2026-07-01"], fallbacks="default"
         )
 
-    _record_usage(response.usage.input_tokens, response.usage.output_tokens)
     # stop_reason says why Claude stopped writing; only "end_turn" means a complete answer
     if response.stop_reason == "refusal":
         logging.error(f"[{task}] Claude declined the request (refusal).")
