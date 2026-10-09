@@ -108,6 +108,7 @@ MAX_DESCRIPTION_CHARS = 2000   # job descriptions are cut to this length to keep
 JOB_BATCH_SIZE = 10            # jobs sent to the AI per call
 JOB_FETCH_ATTEMPTS = 3         # tries per job-portal search before giving up
 RATE_LIMIT_RETRIES = 3         # retries per AI call when the provider is busy
+MALFORMED_RESPONSE_RETRIES = 1 # extra tries when a reply isn't valid JSON or fails the schema check
 API_TIMEOUT_SECONDS = 90       # longest wait for one AI reply before it counts as a failed try
 MAX_RATE_LIMIT_WAIT = 90  # longer suggested waits usually mean the daily quota is used up
 
@@ -720,15 +721,24 @@ def validate_response(data: dict, task: str) -> dict | None:
 
 
 def run_task(record: dict, task: str) -> dict | None:
-    """build_prompt -> call_api -> parse_response -> validate_response."""
-    # Each step returns None on failure, so we stop at the first problem
-    raw = call_api(build_prompt(record, task), task)
-    if raw is None:
-        return None
-    data = parse_response(raw)
-    if data is None:
-        return None
-    return validate_response(data, task)
+    """build_prompt -> call_api -> parse_response -> validate_response.
+
+    A reply that isn't valid JSON or fails the schema check is asked for again
+    (MALFORMED_RESPONSE_RETRIES times). A failed API call is not: call_api has already retried it.
+    """
+    prompt = build_prompt(record, task)
+    for attempt in range(1, MALFORMED_RESPONSE_RETRIES + 2):
+        raw = call_api(prompt, task)
+        if raw is None:
+            return None
+        # Each step returns None on failure
+        data = parse_response(raw)
+        result = validate_response(data, task) if data is not None else None
+        if result is not None:
+            return result
+        if attempt <= MALFORMED_RESPONSE_RETRIES:
+            logging.warning(f"[{task}] Malformed response; asking again ({attempt} of {MALFORMED_RESPONSE_RETRIES}).")
+    return None
 
 
 # ==========================================
