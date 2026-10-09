@@ -3,3 +3,7 @@
 results/
 output_results/
 __pycache__/
+
+# Database backups and in-progress saves (database_functions.py)
+data/*.bak
+data/*.tmp
