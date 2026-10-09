@@ -21,6 +21,7 @@ import io_manager
 import logic_manager
 
 TOP_N = 5  # jobs kept and saved per search
+JOBS_PER_SEARCH = 10  # listings fetched per job title; more means more AI batches (slower, costs more)
 LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "job_matcher.log")
 LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(module)s | %(message)s"
 
@@ -77,28 +78,58 @@ if __name__ == "__main__":
                     resume_name = os.path.basename(record["resume_path"])
                     logging.info(f"event=search stage=input outcome=ok resume={resume_name} filters={record['filters']}")
 
-                    # 2. AI layer: the profile is completed with prompt_missing_data BEFORE the
-                    #    job search, so skills the user types in are used when matching jobs.
-                    #    On failure the user can try again.
-                    while True:
-                        io_manager.display_message("\nAnalysing your resume and searching for jobs. "
-                                                   "This can take a minute...")
-                        profile, jobs = None, []
-                        try:
+                    # Ctrl+C from here until the results are shown cancels only this search
+                    try:
+                        # ---------- 2a. AI layer: candidate profile (kept if a later step fails) ----------
+                        profile = None
+                        while profile is None:
+                            io_manager.display_message("\nReading your resume with AI...")
                             profile = ai_manager.extract_candidate_profile(record["resume_text"])
-                            if profile is not None:
-                                profile = io_manager.prompt_missing_data(profile)
-                                jobs = ai_manager.search_and_extract_jobs(profile)
-                            problem = io_manager.check_ai_result(profile, jobs)
-                        except Exception as error:
-                            problem = f"Something went wrong during the search ({type(error).__name__}: {error})."
-                        if problem == "":
-                            break
-                        io_manager.display_error(problem)
-                        if not io_manager.prompt_yes_no("Try again?"):
-                            profile = None
-                            break
-                    if profile is None:
+                            if profile is None:
+                                logging.warning("event=search stage=profile outcome=failed")
+                                io_manager.display_error(io_manager.check_ai_result(None, []))
+                                if not io_manager.prompt_yes_no("Try again?"):
+                                    break
+                        if profile is None:
+                            continue
+                        # Ask for what the AI couldn't find BEFORE the job search, so typed-in skills are used
+                        profile = io_manager.prompt_missing_data(profile)
+                        logging.info(f"event=search stage=profile outcome=ok keywords={profile['search_keywords']}")
+
+                        # ---------- 2b. AI layer: job search and requirements ----------
+                        # Retrying repeats only this step; the profile above is kept
+                        jobs = None
+                        while jobs is None:
+                            io_manager.display_message("Searching MyCareersFuture and analysing the listings. "
+                                                       "This can take a minute...")
+                            summary = {}
+                            jobs = ai_manager.search_and_extract_jobs(profile, limit_per_search=JOBS_PER_SEARCH,
+                                                                      summary=summary)
+                            logging.info(f"event=search stage=jobs summary={summary}")
+                            problem = ""
+                            if summary["listings_found"] == 0:
+                                problem = ("Could not get any job listings from MyCareersFuture. Check your internet "
+                                           "connection, or try again in a few minutes.")
+                            elif not jobs:
+                                problem = (f"The AI could not analyse any of the {summary['listings_found']} listings "
+                                           "found. Check your API key, or wait a minute if the AI service is busy.")
+                            if problem:
+                                logging.warning(f"event=search stage=jobs outcome=failed reason={problem!r}")
+                                io_manager.display_error(problem)
+                                jobs = None
+                                if not io_manager.prompt_yes_no("Try again?"):
+                                    break
+                        if jobs is None:
+                            continue
+                        left_out = summary["listings_found"] - len(jobs)
+                        if left_out:
+                            # Some listings (a failed batch, or entries the AI skipped) could not be checked
+                            io_manager.display_error(f"{left_out} of {summary['listings_found']} listings could not be "
+                                                     "analysed and were left out. The rest are shown below.")
+
+                    except KeyboardInterrupt:
+                        logging.info("event=search outcome=cancelled_by_user")
+                        io_manager.display_message("\nSearch cancelled.")
                         continue
 
                     # ---------- 3. Logic layer: filter, rank and keep the top jobs ----------
@@ -167,7 +198,7 @@ if __name__ == "__main__":
                 logging.info(f"event=menu choice={choice!r} outcome=finished")
 
     except (KeyboardInterrupt, EOFError):
-        # Ctrl+C, or input closed: exit cleanly instead of printing a traceback
+        # Ctrl+C at the menu, or input closed: exit cleanly instead of printing a traceback
         io_manager.display_message("")
 
     finally:
