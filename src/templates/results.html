@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_jobs.html" import job_list %}
+
+{% block title %}Your matches · Resume Job Matcher{% endblock %}
+
+{% block content %}
+<div class="page-head page-head-row">
+  <div>
+    <h1>Your matches</h1>
+    {# What the logic layer did, e.g. "Checked 26 jobs · 22 removed by your filters (14 salary, 8 job type)" #}
+    <p class="lead">
+      Checked {{ checked }} jobs
+      {%- if removed %} · {{ removed.values() | sum }} removed by your filters
+        ({% for reason, count in removed.items() %}{{ count }} {{ reason }}{% if not loop.last %}, {% endif %}{% endfor %})
+      {%- endif %} · showing the best {{ jobs | length }}
+    </p>
+  </div>
+  <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
+</div>
+
+{% if save_failed %}
+<p class="alert alert-error" role="alert">Your results could not be saved, but they are shown below.</p>
+{% endif %}
+
+<section class="card profile-card">
+  <div class="profile-head">
+    <span class="avatar" aria-hidden="true">{% for part in profile.candidate_name.split()[:2] %}{{ part[0] | upper }}{% endfor %}</span>
+    <div>
+      <h2>{{ profile.candidate_name }}</h2>
+      <p class="muted">{{ profile.qualification_detail }}</p>
+    </div>
+  </div>
+
+  <dl class="stats">
+    <div><dt>Qualification</dt><dd>{{ profile.highest_qualification }}</dd></div>
+    <div><dt>Experience</dt><dd>{{ profile.years_of_experience }} yrs</dd></div>
+    <div><dt>Internships</dt><dd>{{ profile.internship_months }} mths</dd></div>
+    <div><dt>Level</dt><dd>{{ profile.seniority_level }}</dd></div>
+  </dl>
+
+  <h4>Skills</h4>
+  <ul class="tags">
+    {% for skill in profile.core_skills %}<li class="tag">{{ skill }}</li>{% endfor %}
+  </ul>
+
+  {% if profile.certifications %}
+  <h4>Certifications</h4>
+  <ul class="plain-list">
+    {% for cert in profile.certifications %}<li>{{ cert }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<h2 class="section-title">Top matches</h2>
+{% if jobs %}
+  {{ job_list(jobs) }}
+{% else %}
+  <div class="empty card">
+    <h3>No jobs matched</h3>
+    <p class="muted">Try a new search with wider filters.</p>
+  </div>
+{% endif %}
+{% endblock %}

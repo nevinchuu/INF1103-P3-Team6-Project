@@ -1,0 +1,65 @@
+{# Shared job list, used by results.html and saved.html:
+   {% from "_jobs.html" import job_list %} ... {{ job_list(jobs) }} #}
+
+{% macro job_list(jobs) %}
+<ol class="job-list">
+  {% for job in jobs %}
+  {% set required = job.required_skills | length %}
+  {% set matched = job.matched_skills | length %}
+  <li>
+    <details class="job-card">
+      <summary>
+        <span class="job-rank">{{ loop.index }}</span>
+        <span class="job-main">
+          <span class="job-title">{{ job.title }}</span>
+          <span class="job-company">{{ job.company }} · {{ job.location }}</span>
+        </span>
+        <span class="job-side">
+          <span class="job-salary">{{ format_salary(job) }}</span>
+          {% if required %}
+          <span class="match" title="{{ matched }} of {{ required }} required skills matched">
+            <span class="match-bar"><span style="width: {{ (100 * matched / required) | round | int }}%"></span></span>
+            {{ matched }}/{{ required }} skills
+          </span>
+          {% endif %}
+        </span>
+        <svg class="chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </summary>
+
+      <div class="job-body">
+        <p class="job-reason">{{ job.suitability_reason }}</p>
+
+        <dl class="facts">
+          <div><dt>Job type</dt><dd>{{ join_list(job.employment_types) }}</dd></div>
+          <div><dt>Work arrangement</dt><dd>{{ job.work_arrangement }}</dd></div>
+          <div><dt>Experience</dt><dd>{{ job.min_years_experience }}+ years</dd></div>
+          <div><dt>Education</dt><dd>{{ job.min_education }}</dd></div>
+        </dl>
+
+        <div class="skill-groups">
+          <div>
+            <h4>Skills you have</h4>
+            <ul class="tags">
+              {% for skill in job.matched_skills %}<li class="tag tag-good">{{ skill.job_skill }}</li>
+              {% else %}<li class="muted small">None of the required skills</li>{% endfor %}
+            </ul>
+          </div>
+          <div>
+            <h4>Skills to build</h4>
+            <ul class="tags">
+              {% for skill in job.missing_skills %}<li class="tag">{{ skill }}</li>
+              {% else %}<li class="muted small">You have every required skill</li>{% endfor %}
+            </ul>
+          </div>
+        </div>
+
+        <a class="btn btn-secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">
+          View on MyCareersFuture
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>
+        </a>
+      </div>
+    </details>
+  </li>
+  {% endfor %}
+</ol>
+{% endmacro %}

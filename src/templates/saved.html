@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_jobs.html" import job_list %}
+
+{% block title %}Saved jobs · Resume Job Matcher{% endblock %}
+
+{% block content %}
+<div class="page-head page-head-row">
+  <div>
+    <h1>Saved jobs</h1>
+    <p class="lead">
+      {% if jobs %}{{ jobs | length }} jobs saved from your searches. Select a job to see the details.
+      {% else %}Jobs from your searches are saved here.{% endif %}
+    </p>
+  </div>
+  <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
+</div>
+
+{% if jobs %}
+  {{ job_list(jobs) }}
+{% else %}
+  <div class="empty card">
+    <h3>No saved jobs yet</h3>
+    <p class="muted">Run a search and your top matches will appear here.</p>
+    <a class="btn btn-primary" href="{{ url_for('index') }}">Find jobs</a>
+  </div>
+{% endif %}
+{% endblock %}

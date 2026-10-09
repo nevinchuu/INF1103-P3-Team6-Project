@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Find jobs that fit your resume</h1>
+  <p class="lead">Choose a resume and set your preferences. The AI reads it, searches MyCareersFuture and ranks the best matches for you.</p>
+</div>
+
+<form id="search-form" action="{{ url_for('start_search') }}" method="post" enctype="multipart/form-data">
+  <section class="card">
+    <div class="card-head">
+      <span class="step">1</span>
+      <div>
+        <h2>Resume</h2>
+        <p class="muted small">PDF or Word (.docx), up to 5 MB.</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label for="resume_choice">Choose a saved resume</label>
+        <select id="resume_choice" name="resume_choice">
+          {% for name in resumes %}
+          <option value="{{ name }}">{{ name }}</option>
+          {% else %}
+          <option value="">No resumes yet. Upload one</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="resume_file">Or upload a new one</label>
+        <input id="resume_file" name="resume_file" type="file" accept=".pdf,.docx">
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="step">2</span>
+      <div>
+        <h2>Preferences</h2>
+        <p class="muted small">Leave blank to see everything.</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label for="min_salary">Minimum monthly salary (SGD)</label>
+        <input id="min_salary" name="min_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="0" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="max_salary">Maximum monthly salary (SGD)</label>
+        <input id="max_salary" name="max_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="{{ '{:,}'.format(max_salary) }}" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="job_type">Job type</label>
+        <select id="job_type" name="job_type">
+          {% for option in job_types %}<option>{{ option }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="work_arrangement">Work arrangement</label>
+        <select id="work_arrangement" name="work_arrangement">
+          {% for option in work_arrangements %}<option>{{ option }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="max_years_experience">Max years of experience required</label>
+        <input id="max_years_experience" name="max_years_experience" type="number" min="0" max="{{ max_years }}" placeholder="Any" inputmode="numeric">
+      </div>
+    </div>
+
+    <details class="optional">
+      <summary>Optional: details the AI might miss</summary>
+      <p class="muted small">Only used if your resume doesn't mention them.</p>
+      <div class="grid">
+        <div class="field">
+          <label for="fallback_qualification">Highest completed qualification</label>
+          <select id="fallback_qualification" name="fallback_qualification">
+            <option value="">Not set</option>
+            {% for level in education_levels %}<option>{{ level }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="fallback_skills">Skills, separated by commas</label>
+          <input id="fallback_skills" name="fallback_skills" type="text" placeholder="e.g. Python, Excel">
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <div class="form-actions">
+    <p id="form-error" class="alert alert-error" role="alert" hidden></p>
+    <button id="search-button" class="btn btn-primary" type="submit">Find matching jobs</button>
+  </div>
+</form>
+
+<section id="progress-panel" class="card progress-card" hidden aria-live="polite">
+  <div class="progress-top">
+    <h2>Finding your matches</h2>
+    <span id="progress-percent" class="progress-percent">0%</span>
+  </div>
+  <div class="progress" role="progressbar" aria-label="Search progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div id="progress-bar" class="progress-bar"></div>
+  </div>
+  <p id="progress-message" class="muted small">Starting...</p>
+
+  {# Each step is active from its data-from percent; app.js ticks them off #}
+  <ol class="steps">
+    <li data-from="0">Reading your resume</li>
+    <li data-from="25">Searching the job portal</li>
+    <li data-from="40">Analysing job listings</li>
+    <li data-from="92">Ranking and saving your matches</li>
+  </ol>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}
