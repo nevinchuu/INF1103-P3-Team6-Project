@@ -270,8 +270,8 @@ JOB_BATCH_SCHEMA = {
 
 # The two kinds of AI call this module makes, and the schema each one uses
 TASKS = {
-    "candidate_profile": {"schema_name": "candidate_profile", "schema": CANDIDATE_SCHEMA},
-    "job_requirements": {"schema_name": "job_requirements", "schema": JOB_BATCH_SCHEMA},
+    "candidate_profile": CANDIDATE_SCHEMA,
+    "job_requirements": JOB_BATCH_SCHEMA,
 }
 
 # Range checks applied by validate_response (inclusive)
@@ -407,11 +407,11 @@ def call_api(prompt: str, task: str) -> str | None:
     if PROVIDERS[PROVIDER]["sdk"] == "anthropic":
         attempts = [lambda: _anthropic_request(client, prompt, task)]
     else:
-        schema = TASKS[task]["schema"]
+        schema = TASKS[task]
         # Attempt 1: strict mode - the provider guarantees the reply matches the schema
         schema_mode = {
             "type": "json_schema",
-            "json_schema": {"name": TASKS[task]["schema_name"], "strict": True, "schema": schema},
+            "json_schema": {"name": task, "strict": True, "schema": schema},
         }
         # Attempt 2 (only if attempt 1 is rejected): plain JSON mode, with the schema
         # pasted into the prompt so the AI still knows the shape we want
@@ -470,7 +470,7 @@ def _anthropic_request(client: anthropic.Anthropic, prompt: str, task: str) -> s
     params = {
         "model": MODEL,
         "max_tokens": 16000,  # upper limit on reply length
-        "output_config": {"format": {"type": "json_schema", "schema": TASKS[task]["schema"]}},
+        "output_config": {"format": {"type": "json_schema", "schema": TASKS[task]}},
         "messages": [{"role": "user", "content": prompt}],
     }
     if MODEL.startswith("claude-haiku"):
@@ -659,7 +659,7 @@ def validate_response(data: dict, task: str) -> dict | None:
     dropped individually.
     """
     try:
-        return _validate_value(data, TASKS[task]["schema"], task, task)
+        return _validate_value(data, TASKS[task], task, task)
     except ValueError as e:
         logging.error(f"[{task}] Invalid response: {e}")
         return None
