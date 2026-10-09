@@ -108,6 +108,7 @@ MAX_DESCRIPTION_CHARS = 2000   # job descriptions are cut to this length to keep
 JOB_BATCH_SIZE = 10            # jobs sent to the AI per call
 JOB_FETCH_ATTEMPTS = 3         # tries per job-portal search before giving up
 RATE_LIMIT_RETRIES = 3         # retries per AI call when the provider is busy
+API_TIMEOUT_SECONDS = 90       # longest wait for one AI reply before it counts as a failed try
 MAX_RATE_LIMIT_WAIT = 90  # longer suggested waits usually mean the daily quota is used up
 
 # The API client object. Starts empty and is created the first time it's needed (_get_client).
@@ -150,9 +151,10 @@ def _get_client() -> openai.OpenAI | anthropic.Anthropic:
         # Retries are handled in call_api so each one is visible and counts once against quota
         # (max_retries=0 turns off the SDK's own hidden retries)
         if config["sdk"] == "anthropic":
-            _client = anthropic.Anthropic(api_key=api_key, timeout=300, max_retries=0)
+            _client = anthropic.Anthropic(api_key=api_key, timeout=API_TIMEOUT_SECONDS, max_retries=0)
         else:
-            _client = openai.OpenAI(api_key=api_key, base_url=config["base_url"], timeout=300, max_retries=0)
+            _client = openai.OpenAI(api_key=api_key, base_url=config["base_url"],
+                                    timeout=API_TIMEOUT_SECONDS, max_retries=0)
         logging.info(f"Using {PROVIDER} ({MODEL})")
     return _client
 
