@@ -13,6 +13,7 @@ Run from the project root:
 
 import logging
 import sys
+import os
 
 import ai_manager
 import database_functions
@@ -20,10 +21,26 @@ import io_manager
 import logic_manager
 
 TOP_N = 5  # jobs kept and saved per search
+LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "job_matcher.log")
+LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(module)s | %(message)s"
 
 if __name__ == "__main__":
-    # ai_manager turns on INFO logging when imported; show only warnings and errors
-    logging.getLogger().setLevel(logging.WARNING)
+    # ---------- Logging ----------
+    # ai_manager sets up terminal logging when imported. Keep the terminal to warnings and errors,
+    # and write everything (INFO and up) to a log file for finding out what went wrong later.
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    for terminal_handler in root_logger.handlers:
+        terminal_handler.setLevel(logging.WARNING)
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        log_file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+        log_file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        root_logger.addHandler(log_file_handler)
+    except OSError as error:
+        # No log file (e.g. a read-only folder): the program still runs, with terminal logging only
+        logging.warning(f"Could not open the log file {LOG_PATH} ({type(error).__name__}); logging to the terminal only")
+    logging.info(f"event=start provider={ai_manager.PROVIDER} model={ai_manager.MODEL}")
 
     try:
         io_manager.display_header("RESUME JOB MATCHER")
@@ -70,7 +87,7 @@ if __name__ == "__main__":
                         top_jobs = logic_manager.filter_and_rank(profile, jobs, record["filters"], TOP_N)
                         removed = logic_manager.count_removed(jobs, record["filters"])
                     except Exception as error:
-                        logging.error(f"Filtering and ranking failed ({type(error).__name__}: {error})")
+                        logging.exception(f"event=search stage=logic outcome=failed error={type(error).__name__}")
                         io_manager.display_error("Could not filter and rank the jobs. Please try a new search.")
                         continue
 
@@ -82,7 +99,7 @@ if __name__ == "__main__":
                             database = database_functions.insert_no_duplicates(top_jobs, database)
                             database_functions.write_database(database)
                         except Exception as error:
-                            logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
+                            logging.error(f"event=search stage=save outcome=failed error={type(error).__name__}: {error}")
                             io_manager.display_error("Your results could not be saved, but they are shown below.")
 
                     io_manager.display_result(profile, top_jobs)
@@ -116,12 +133,19 @@ if __name__ == "__main__":
             except EOFError:
                 raise  # input was closed: let the handler below exit cleanly
             except Exception as error:
-                logging.error(f"Unexpected error ({type(error).__name__}: {error})")
+                # logging.exception also writes the traceback to the log file, for finding the cause later
+                logging.exception(f"event=menu choice={choice!r} outcome=unexpected_error error={type(error).__name__}")
                 io_manager.display_error("Something went wrong. Returning to the main menu.")
+            finally:
+                logging.info(f"event=menu choice={choice!r} outcome=finished")
 
     except (KeyboardInterrupt, EOFError):
         # Ctrl+C, or input closed: exit cleanly instead of printing a traceback
         io_manager.display_message("")
 
-    io_manager.display_message("Goodbye!")
+    finally:
+        # Runs however the program ends, so the log always records it and the file is flushed
+        io_manager.display_message("Goodbye!")
+        logging.info("event=exit")
+        logging.shutdown()
     sys.exit(0)

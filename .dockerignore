@@ -12,7 +12,8 @@
 __pycache__/
 *.pyc
 
-# Saved jobs and test output belong to each machine, not the image
+# Saved jobs, logs and test output belong to each machine, not the image
 data/
+logs/
 results/
 output_results/
