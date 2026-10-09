@@ -505,6 +505,9 @@ def _openai_request(client: openai.OpenAI, prompt: str, response_format: dict) -
     completion = client.chat.completions.create(**params)
 
     choice = completion.choices[0]
+    if choice.finish_reason == "length":
+        logging.error(f"Response from {PROVIDER} ({MODEL}) was cut off at its length limit.")
+        return None
     if not choice.message.content:
         logging.error(f"Empty response from {PROVIDER} ({MODEL}); finish_reason={choice.finish_reason}")
     return choice.message.content
