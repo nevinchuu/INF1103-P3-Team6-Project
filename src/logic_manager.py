@@ -1,5 +1,6 @@
 from collections import Counter
 from urllib.parse import urlparse
+import re
 
 # Ordered lowest to highest, so a list index works as an education level number.
 # Same values as ai_manager.EDUCATION_LEVELS (copied so this layer does not import another layer)
@@ -9,6 +10,7 @@ SENIORITY_LEVELS = [
         "Professional", "Manager", "Middle Management", "Senior Management",
 ]
 ANY = "Any"  # the filter value meaning "no preference" (from io_manager)
+SKILL_GAP_LIMIT = 5  # most common missing skills returned by find_skill_gaps
 
 
 # Checks the link format only, without going online, so it is instant and
@@ -141,3 +143,19 @@ def find_skill_gaps(jobs):
             job_skills.add(key)
         counts.update(job_skills)
     return [(names[key], count) for key, count in counts.most_common(SKILL_GAP_LIMIT) if count >= 2]
+
+
+# The skills that appear word for word in text, ignoring case,
+# e.g. "SQL" is found in "Wrote SQL reports" but "Java" is not found in "JavaScript"
+def keywords_found(skills, text):
+    text = text.lower()
+    return [skill for skill in skills if re.search(rf"(?<!\w){re.escape(skill.lower())}(?!\w)", text)]
+
+
+# All the words of a tailored resume (ai_manager.tailor_resume) as one text, for keywords_found
+def resume_as_text(resume):
+    parts = [resume["summary"], *resume["skills"]]
+    for section in resume["sections"]:
+        for entry in section["entries"]:
+            parts += [entry["title"], entry["organisation"], *entry["bullets"]]
+    return "\n".join(parts)
