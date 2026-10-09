@@ -97,6 +97,22 @@ if __name__ == "__main__":
                         summary = f"Checked {len(jobs)} jobs: {total_removed} removed by your filters ({details})."
                     io_manager.display_message(f"\n{summary} Showing the best {len(top_jobs)}.")
 
+                else:
+                    # Show my last results / View one job in detail: both use every saved job (data layer)
+                    saved_jobs = database_functions.read_database()
+                    if not isinstance(saved_jobs, list):
+                        saved_jobs = []
+                    saved_jobs = [job for job in saved_jobs if isinstance(job, dict)]
+                    if not saved_jobs:
+                        io_manager.display_error("No saved jobs yet. Run a search first.")
+                        continue
+
+                    io_manager.display_header(f"SAVED JOBS ({len(saved_jobs)})")
+                    io_manager.display_list(saved_jobs)
+                    if choice == io_manager.MENU_DETAILS:
+                        number = io_manager.prompt_number("Job number to view", 1, len(saved_jobs))
+                        io_manager.display_record(saved_jobs[number - 1])
+
             except EOFError:
                 raise  # input was closed: let the handler below exit cleanly
             except Exception as error:
