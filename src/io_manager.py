@@ -42,11 +42,11 @@ def display_header(title):
     print("=" * LINE_WIDTH)
 
 
-def prompt_text(prompt):
-    """Ask for text until something is typed."""
+def prompt_text(prompt, allow_blank=False):
+    """Ask for text until something is typed (or once, if allow_blank)."""
     while True:
         answer = input(f"{prompt}: ").strip()
-        if answer:
+        if answer or allow_blank:
             return answer
         display_error("This cannot be left blank.")
 
