@@ -57,6 +57,42 @@ def test_job_links_must_be_https_on_mycareersfuture():
     assert not logic_manager.is_valid_job_url(None)
     assert logic_manager.filter_reason(make_job(job_url="N/A"), NO_FILTERS) == "bad link"
 
+# 2. Salary: a job is removed only if its whole pay range is outside the user's range
+def test_salary_filter_keeps_overlapping_and_unstated_pay():
+    filters = {**NO_FILTERS, "min_salary": 5000, "max_salary": 8000}
+    assert logic_manager.filter_reason(make_job(min_salary=4000, max_salary=6000), filters) == ""
+    assert logic_manager.filter_reason(make_job(min_salary=3000, max_salary=4500), filters) == "salary"
+    assert logic_manager.filter_reason(make_job(min_salary=9000, max_salary=12000), filters) == "salary"
+    # 0 means the job doesn't state a salary, so it is kept
+    assert logic_manager.filter_reason(make_job(min_salary=0, max_salary=0), filters) == ""
+
+
+# 3. Job type and work arrangement, including the special cases
+def test_job_type_and_work_arrangement_filters():
+    full_time = {**NO_FILTERS, "job_type": "Full Time"}
+    # "Permanent" jobs on MyCareersFuture are full-time
+    assert logic_manager.filter_reason(make_job(employment_types=["Permanent"]), full_time) == ""
+    assert logic_manager.filter_reason(make_job(employment_types=["Contract"]), full_time) == "job type"
+
+    remote = {**NO_FILTERS, "work_arrangement": "Remote"}
+    assert logic_manager.filter_reason(make_job(work_arrangement="Remote"), remote) == ""
+    assert logic_manager.filter_reason(make_job(work_arrangement="Onsite"), remote) == "work arrangement"
+    # A job that doesn't say is kept rather than wrongly removed
+    assert logic_manager.filter_reason(make_job(work_arrangement="Not specified"), remote) == ""
+
+
+# 4. count_removed counts each removed job once, under the first filter it fails
+def test_count_removed_groups_jobs_by_first_failed_filter():
+    filters = {**NO_FILTERS, "min_salary": 5000, "max_years_experience": 2}
+    jobs = [
+        make_job(),                                          # kept
+        make_job(job_url="N/A"),                             # bad link
+        make_job(max_salary=4000),                           # salary
+        make_job(min_years_experience=5),                    # experience
+        make_job(max_salary=4000, min_years_experience=5),   # fails both: counted under salary only
+    ]
+    assert logic_manager.count_removed(jobs, filters) == {"bad link": 1, "salary": 2, "experience": 1}
+    assert logic_manager.count_removed([make_job()], filters) == {}
 
 def run_all_tests():
     """Runs every test_* function in this file. Returns how many failed."""
