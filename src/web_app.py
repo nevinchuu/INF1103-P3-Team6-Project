@@ -73,10 +73,7 @@ def results(search_id):
 @app.get("/saved")
 def saved():
     """Every job saved by the data layer."""
-    jobs = database_functions.read_database()
-    if not isinstance(jobs, list):
-        jobs = []
-    return render_template("saved.html", jobs=[job for job in jobs if isinstance(job, dict)])
+    return render_template("saved.html", jobs=database_functions.read_saved_jobs())
 
 
 # ==========================================
@@ -108,7 +105,7 @@ def start_search():
         searches[search_id] = {"status": "running", "percent": 0, "message": "Starting...",
                                "result": None, "error": None}
     threading.Thread(target=run_search, daemon=True,
-                     args=(search_id, resume_text, filters,
+                     args=(search_id, resume_text, os.path.basename(path), filters,
                            request.form.get("fallback_qualification", ""),
                            request.form.get("fallback_skills", ""))).start()
     return jsonify(search_id=search_id)
@@ -134,7 +131,7 @@ def update_search(search_id: str, **changes) -> None:
         searches[search_id].update(changes)
 
 
-def run_search(search_id, resume_text, filters, fallback_qualification, fallback_skills):
+def run_search(search_id, resume_text, resume_name, filters, fallback_qualification, fallback_skills):
     """Runs the AI, logic and data layers in a background thread, reporting progress as it goes.
 
     Progress bar: 0-25% reading the resume, 25-40% portal searches, 40-90% AI batches,
@@ -173,14 +170,11 @@ def run_search(search_id, resume_text, filters, fallback_qualification, fallback
         # 4. Data layer (a failed save still shows the results)
         update_search(search_id, percent=96, message="Saving results...")
         save_failed = False
-        if top_jobs:
-            try:
-                database = database_functions.read_database()
-                database = database_functions.insert_no_duplicates(top_jobs, database)
-                database_functions.write_database(database)
-            except Exception as error:
-                logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
-                save_failed = True
+        try:
+            database_functions.save_new_jobs(top_jobs, resume_name)
+        except Exception as error:
+            logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
+            save_failed = True
 
         result = {"profile": profile, "jobs": top_jobs, "checked": len(jobs),
                   "removed": removed, "save_failed": save_failed}
