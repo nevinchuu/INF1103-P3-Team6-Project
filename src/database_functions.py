@@ -86,6 +86,21 @@ def find_by_url(data_main, job_url):
     return None
 
 
+# the saved jobs without the one with this link (IDs change after every removal, so the link is used)
+def remove_by_url(data_main, job_url):
+    return [job for job in data_main if job.get("job_url") != job_url]
+
+
+# removes one saved job from the file, found by its link
+def remove_saved_job(job_url):
+    write_database(remove_by_url(read_saved_jobs(), job_url))
+
+
+# removes every saved job from the file
+def clear_saved_jobs():
+    write_database([])
+
+
 # will check by job URL before insertion into database
 def insert_no_duplicates(to_check, data_main):
     current_listings = []
