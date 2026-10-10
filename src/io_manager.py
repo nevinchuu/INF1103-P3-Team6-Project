@@ -216,9 +216,11 @@ def prompt_filters():
     }
 
 
-def collect_input():
-    """Collect the resume and filters for one search."""
+def collect_input(ai_name="an AI service"):
+    """Collect the resume and filters for one search. ai_name is shown in the privacy notice."""
     display_header("NEW SEARCH")
+    display_message(f"Note: your resume's text is sent to {ai_name} to analyse it. Remove anything you'd "
+                    "rather not share (e.g. your home address or NRIC) first.")
     record = prompt_resume()
     if record is None:
         return None
