@@ -1,6 +1,9 @@
+import io
 import os
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.shared import Cm, Pt, RGBColor
 from pypdf import PdfReader
 
 RESUME_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resumes")
@@ -152,6 +155,64 @@ def load_resume(path):
         return "", ("Could not read enough text from that file. It may be a scanned image, "
                     "password-protected or corrupted. Please try another file.")
     return text, ""
+
+
+def write_resume_docx(resume):
+    """Return a tailored resume (ai_manager.tailor_resume) as the bytes of a Word file.
+    A plain one-column layout, which applicant tracking systems read reliably."""
+    document = Document()
+    for section in document.sections:
+        section.top_margin = section.bottom_margin = Cm(1.8)
+        section.left_margin = section.right_margin = Cm(2)
+    style = document.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(10.5)
+    style.paragraph_format.space_after = Pt(2)
+
+    def heading(text):
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.space_before = Pt(10)
+        paragraph.paragraph_format.space_after = Pt(4)
+        run = paragraph.add_run(text.upper())
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.color.rgb = RGBColor(0x1F, 0x3A, 0x8A)
+
+    if resume["name"]:
+        paragraph = document.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = paragraph.add_run(resume["name"])
+        run.bold = True
+        run.font.size = Pt(18)
+    if resume["contact"]:
+        paragraph = document.add_paragraph(resume["contact"])
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    if resume["summary"]:
+        heading("Summary")
+        document.add_paragraph(resume["summary"])
+    if resume["skills"]:
+        heading("Skills")
+        document.add_paragraph(" · ".join(resume["skills"]))
+
+    for section in resume["sections"]:
+        heading(section["heading"])
+        for entry in section["entries"]:
+            # "Title, Organisation" on the left, dates on the right (a right-aligned tab stop)
+            paragraph = document.add_paragraph()
+            paragraph.paragraph_format.space_before = Pt(4)
+            paragraph.paragraph_format.tab_stops.add_tab_stop(Cm(17), WD_TAB_ALIGNMENT.RIGHT)
+            paragraph.add_run(entry["title"]).bold = True
+            if entry["organisation"] and entry["organisation"] != entry["title"]:
+                paragraph.add_run(f", {entry['organisation']}")
+            if entry["dates"]:
+                paragraph.add_run(f"\t{entry['dates']}").italic = True
+            for bullet in entry["bullets"]:
+                document.add_paragraph(bullet, style="List Bullet")
+
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
 
 
 def list_resumes():
