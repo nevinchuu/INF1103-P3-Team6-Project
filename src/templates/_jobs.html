@@ -1,14 +1,17 @@
 {# Shared job list, used by results.html and saved.html:
    {% from "_jobs.html" import job_list %} ... {{ job_list(jobs) }}
-   saved=True leaves out the rank and adds a Remove button.
+   saved=True leaves out the rank and adds a Remove button and the data-* values saved.js sorts by.
    Facts the portal doesn't give ("Not specified") are left out. #}
 
 {% macro job_list(jobs, saved=False) %}
-<ol class="job-list{% if saved %} job-list-saved{% endif %}">
+<ol class="job-list{% if saved %} job-list-saved{% endif %}" id="job-list">
   {% for job in jobs %}
   {% set required = job.required_skills | length %}
   {% set matched = job.matched_skills | length %}
-  <li>
+  <li{% if saved %} data-order="{{ loop.index }}"
+      data-salary="{{ job.max_salary or job.min_salary or 0 }}"
+      data-match="{{ (matched / required) if required else 0 }}"
+      data-text="{{ [job.title, job.company, job.location] | join(' ') | lower }}"{% endif %}>
     <details class="job-card">
       <summary>
         {% if not saved %}<span class="job-rank">{{ loop.index }}</span>{% endif %}

@@ -116,9 +116,11 @@ def results(search_id):
 
 @app.get("/saved")
 def saved():
-    """Every job saved by the data layer."""
+    """Every job saved by the data layer, or those matching ?q= (saved.js also filters as you type)."""
     jobs = database_functions.read_saved_jobs()
-    return render_template("saved.html", jobs=jobs, total=len(jobs))
+    keyword = request.args.get("q", "").strip()
+    return render_template("saved.html", jobs=database_functions.search_jobs(jobs, keyword) if keyword else jobs,
+                           total=len(jobs), keyword=keyword)
 
 
 @app.post("/saved/remove")

@@ -16,13 +16,29 @@
 </div>
 
 {% if total %}
+  {# The filter is a search form (?q=, database_functions.search_jobs); saved.js also filters
+     as you type and sorts in the browser #}
   <div class="toolbar">
+    <form class="field" method="get" action="{{ url_for('saved') }}" role="search">
+      <label for="job-filter">Filter</label>
+      <input id="job-filter" name="q" type="search" placeholder="Title, company or location" value="{{ keyword }}">
+    </form>
+    <div class="field">
+      <label for="job-sort">Sort by</label>
+      <select id="job-sort">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="match">Best skill match</option>
+        <option value="salary">Highest salary</option>
+      </select>
+    </div>
     <form action="{{ url_for('clear_saved') }}" method="post" id="clear-form" data-total="{{ total }}">
       <button class="btn btn-ghost" type="submit">Clear all</button>
     </form>
   </div>
 
   {{ job_list(jobs, saved=True) }}
+  <p id="no-filter-match" class="muted empty-filter" {% if jobs %}hidden{% endif %}>No saved jobs match that filter.</p>
 {% else %}
   <div class="empty card">
     <h3>No saved jobs yet</h3>
