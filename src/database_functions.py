@@ -64,6 +64,7 @@ def search_jobs(data_main, keyword):
             results.append(job)
     return results
 
+
 # saves the jobs that are not saved yet, noting which resume found them (resume_name),
 # and returns how many were new. Any error is raised to the caller, which tells the user the save failed
 def save_new_jobs(to_save, resume_name):
@@ -75,6 +76,15 @@ def save_new_jobs(to_save, resume_name):
             job["resume"] = resume_name  # which resume to tailor for this job later
         write_database(insert_no_duplicates(new_jobs, data_main))
     return len(new_jobs)
+
+
+# query: the saved job with this link, or None
+def find_by_url(data_main, job_url):
+    for job in data_main:
+        if job.get("job_url") == job_url:
+            return job
+    return None
+
 
 # will check by job URL before insertion into database
 def insert_no_duplicates(to_check, data_main):
