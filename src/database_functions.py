@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 
@@ -8,6 +9,17 @@ json_database = []
 DATABASE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "job_listings.json")
 
 
+# keeps a broken database as a dated backup instead of overwriting it,
+# e.g. job_listings.json.20261009-153000.bak
+def back_up_database(reason):
+    backup_path = f"{DATABASE_PATH}.{time.strftime('%Y%m%d-%H%M%S')}.bak"
+    os.replace(DATABASE_PATH, backup_path)
+    logging.warning(f"Saved jobs file was {reason}; kept it as {backup_path} and started a new one")
+
+
+# reads the database. A missing file is created empty; a corrupt file, or one that is not a list
+# of records, is backed up and replaced by an empty list. Any other error (e.g. no permission to
+# read the file) is raised, so a save never overwrites a file it could not read
 def read_database():
     temp_arr = []
 
@@ -15,20 +27,22 @@ def read_database():
     try:
         with open(DATABASE_PATH, 'r', encoding='utf-8') as file:
             data = json.load(file)
-            return data
 
     # if the database doesnt exist yet, creates it with an empty list
     except FileNotFoundError:
-        os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
-        with open(DATABASE_PATH, "w", encoding="utf-8") as file:
-            json.dump(temp_arr, file)
-            return temp_arr
-
-    # if the database is corrupted, keep it as a dated backup instead of overwriting it,
-    # e.g. job_listings.json.20261009-153000.bak, then start again with an empty list
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        os.replace(DATABASE_PATH, f"{DATABASE_PATH}.{time.strftime('%Y%m%d-%H%M%S')}.bak")
+        write_database(temp_arr)
         return temp_arr
+
+    # if the database is corrupted, back it up and start again with an empty list
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        back_up_database("not valid JSON")
+        return temp_arr
+
+    # valid JSON but not a list (e.g. edited by hand): same as corrupt
+    if not isinstance(data, list):
+        back_up_database(f"a JSON {type(data).__name__}, not a list of jobs")
+        return temp_arr
+    return data
 
 
 # any error is raised to the caller (main.py / web_app.py), which tells the user the save failed
