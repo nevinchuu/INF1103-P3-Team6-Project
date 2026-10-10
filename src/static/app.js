@@ -1,4 +1,4 @@
-// Search page: checks the form before it is sent.
+// Search page: checks the form before it is sent and remembers the last choices.
 // Sending the form and the progress card are handled by progress.js (loaded first).
 
 const form = document.getElementById("task-form");
@@ -10,6 +10,9 @@ const maxSalary = document.getElementById("max_salary");
 
 const MAX_UPLOAD = Number(form.dataset.maxUpload);
 const ALLOWED_EXTENSIONS = [".pdf", ".docx"];
+const SAVED_FIELDS = ["resume_choice", "min_salary", "max_salary", "job_type", "work_arrangement",
+                      "max_years_experience", "fallback_qualification", "fallback_skills"];
+const STORAGE_KEY = "jobMatcher.lastSearch";
 
 // ---------- Checks before sending ----------
 
@@ -42,4 +45,35 @@ function checkSalaryRange() {
 minSalary.addEventListener("input", checkSalaryRange);
 maxSalary.addEventListener("input", checkSalaryRange);
 
-setupTaskForm({ resultUrl: (id) => `/results/${id}` });
+// ---------- Remembering the last search's choices (this browser only) ----------
+
+function rememberFields() {
+  const values = {};
+  for (const name of SAVED_FIELDS) values[name] = form.elements[name].value;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(values));
+  } catch {
+    // Storage may be blocked (e.g. private browsing); the form still works
+  }
+}
+
+function restoreFields() {
+  let values;
+  try {
+    values = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+  } catch {
+    return;
+  }
+  for (const name of SAVED_FIELDS) {
+    const field = form.elements[name];
+    const value = values[name];
+    if (typeof value !== "string") continue;
+    // A select only takes a value it still offers (e.g. a resume that was deleted is skipped)
+    if (field.tagName === "SELECT" && ![...field.options].some((option) => option.value === value)) continue;
+    field.value = value;
+  }
+  checkSalaryRange();
+}
+
+restoreFields();
+setupTaskForm({ resultUrl: (id) => `/results/${id}`, onStarted: rememberFields });
