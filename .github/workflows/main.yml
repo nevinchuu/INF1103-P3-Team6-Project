@@ -34,7 +34,11 @@ jobs:
       - name: Compile all Python files
         run: python -m compileall -q src
 
-      # 5. Every layer imports and the web pages load. No API key is needed,
+      # 5. Logic layer tests (fails the check if any test fails)
+      - name: Run tests
+        run: python tests/test_logic_manager.py
+
+      # 6. Every layer imports and the web pages load. No API key is needed,
       #    because no search is run.
       - name: Import layers and load web pages
         working-directory: src
