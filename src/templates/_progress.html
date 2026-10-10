@@ -1,0 +1,25 @@
+{# Progress card shown while a background task runs; static/progress.js drives it.
+   {% from "_progress.html" import progress_panel %}
+   {{ progress_panel("Finding your matches", [(0, "Reading your resume"), (25, "Searching the job portal")]) }}
+   Each step is active from its percent until the next one starts. #}
+
+{% macro progress_panel(title, steps) %}
+<section id="progress-panel" class="card progress-card" hidden aria-live="polite">
+  <div class="progress-top">
+    <h2>{{ title }}</h2>
+    <span id="progress-percent" class="progress-percent">0%</span>
+  </div>
+  <div class="progress" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div id="progress-bar" class="progress-bar"></div>
+  </div>
+  <p id="progress-message" class="muted small">Starting...</p>
+
+  <ol class="steps">
+    {% for percent, label in steps %}<li data-from="{{ percent }}">{{ label }}</li>{% endfor %}
+  </ol>
+
+  <div class="progress-actions">
+    <button id="cancel-button" class="btn btn-ghost" type="button">Cancel</button>
+  </div>
+</section>
+{% endmacro %}

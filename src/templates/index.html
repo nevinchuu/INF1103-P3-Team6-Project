@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_progress.html" import progress_panel %}
 
 {% block content %}
 <div class="page-head">
@@ -6,7 +7,7 @@
   <p class="lead">Choose a resume and set your preferences. The AI reads it, searches MyCareersFuture and ranks the best matches for you.</p>
 </div>
 
-<form id="search-form" action="{{ url_for('start_search') }}" method="post" enctype="multipart/form-data">
+<form id="task-form" action="{{ url_for('start_search') }}" method="post" enctype="multipart/form-data">
   <section class="card">
     <div class="card-head">
       <span class="step">1</span>
@@ -91,30 +92,19 @@
 
   <div class="form-actions">
     <p id="form-error" class="alert alert-error" role="alert" hidden></p>
-    <button id="search-button" class="btn btn-primary" type="submit">Find matching jobs</button>
+    <button id="task-button" class="btn btn-primary" type="submit">Find matching jobs</button>
   </div>
 </form>
 
-<section id="progress-panel" class="card progress-card" hidden aria-live="polite">
-  <div class="progress-top">
-    <h2>Finding your matches</h2>
-    <span id="progress-percent" class="progress-percent">0%</span>
-  </div>
-  <div class="progress" role="progressbar" aria-label="Search progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-    <div id="progress-bar" class="progress-bar"></div>
-  </div>
-  <p id="progress-message" class="muted small">Starting...</p>
-
-  {# Each step is active from its data-from percent; app.js ticks them off #}
-  <ol class="steps">
-    <li data-from="0">Reading your resume</li>
-    <li data-from="25">Searching the job portal</li>
-    <li data-from="40">Analysing job listings</li>
-    <li data-from="92">Ranking and saving your matches</li>
-  </ol>
-</section>
+{{ progress_panel("Finding your matches", [
+  (0, "Reading your resume"),
+  (25, "Searching the job portal"),
+  (40, "Analysing job listings"),
+  (92, "Ranking and saving your matches"),
+]) }}
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='progress.js') }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}

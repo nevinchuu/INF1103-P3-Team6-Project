@@ -15,7 +15,6 @@ starts with {% extends "base.html" %}.
 import logging
 import os
 import threading
-import uuid
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 from werkzeug.utils import secure_filename
@@ -32,12 +31,6 @@ app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # largest resume upload: 5 M
 
 # io_manager's text helpers, so templates show salaries and lists the same way as the console
 app.jinja_env.globals.update(format_salary=io_manager.format_salary, join_list=io_manager.join_list)
-
-# Searches by id: {"status": "running" | "done" | "error", "percent", "message", "result", "error"}.
-# Kept in memory only (lost on restart); the jobs themselves are saved by the data layer.
-# Background threads update this, so changes go through the lock.
-searches = {}
-searches_lock = threading.Lock()
 
 
 # ==========================================
@@ -61,10 +54,11 @@ def index():
 @app.get("/results/<search_id>")
 def results(search_id):
     """The profile and top jobs from one finished search."""
-    with searches_lock:
-        search = searches.get(search_id)
+    search = io_manager.get_task(search_id)
     if search is None:
         abort(404)
+    if search["status"] == "running":
+        return redirect(url_for("index", search=search_id))  # the search page picks up its progress
     if search["status"] != "done":
         return redirect(url_for("index"))
     return render_template("results.html", **search["result"])
@@ -77,7 +71,7 @@ def saved():
 
 
 # ==========================================
-# SEARCH API (used by static/app.js)
+# SEARCH API (used by static/progress.js)
 # ==========================================
 
 @app.post("/search")
@@ -100,10 +94,7 @@ def start_search():
     if problem:
         return jsonify(error=problem), 400
 
-    search_id = uuid.uuid4().hex
-    with searches_lock:
-        searches[search_id] = {"status": "running", "percent": 0, "message": "Starting...",
-                               "result": None, "error": None}
+    search_id = io_manager.start_task()
     threading.Thread(target=run_search, daemon=True,
                      args=(search_id, resume_text, os.path.basename(path), filters,
                            request.form.get("fallback_qualification", ""),
@@ -114,22 +105,23 @@ def start_search():
 @app.get("/progress/<search_id>")
 def progress(search_id):
     """Progress of one search, for the progress bar."""
-    with searches_lock:
-        search = searches.get(search_id)
-        if search is None:
-            return jsonify(error="Search not found."), 404
-        return jsonify(status=search["status"], percent=search["percent"],
-                       message=search["message"], error=search["error"])
+    search = io_manager.get_task(search_id)
+    if search is None:
+        return jsonify(error="This search is no longer available. Please start a new one."), 404
+    return jsonify(status=search["status"], percent=search["percent"],
+                   message=search["message"], error=search["error"])
+
+
+@app.post("/search/<search_id>/cancel")
+def cancel_search(search_id):
+    """Stops a running search. The background thread stops at its next progress update."""
+    io_manager.cancel_task(search_id)
+    return jsonify(ok=True)
 
 
 # ==========================================
-# HELPERS
+# BACKGROUND TASKS (the work each thread does, like main.py's search)
 # ==========================================
-
-def update_search(search_id: str, **changes) -> None:
-    with searches_lock:
-        searches[search_id].update(changes)
-
 
 def run_search(search_id, resume_text, resume_name, filters, fallback_qualification, fallback_skills):
     """Runs the AI, logic and data layers in a background thread, reporting progress as it goes.
@@ -139,12 +131,12 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
     """
     try:
         # 2. AI layer: profile
-        update_search(search_id, percent=5, message="Reading your resume with AI...")
+        io_manager.update_task(search_id, percent=5, message="Reading your resume with AI...")
         profile = ai_manager.extract_candidate_profile(resume_text)
         if profile is None:
-            update_search(search_id, status="error",
-                          error="The AI could not analyse your resume. Check your internet connection "
-                                "and API key, or wait a minute if the AI service is busy.")
+            io_manager.update_task(search_id, status="error",
+                                   error="The AI could not analyse your resume. Check your internet connection "
+                                         "and API key, or wait a minute if the AI service is busy.")
             return
 
         # 1. Input layer: details the AI missed, from the form's optional fields
@@ -153,22 +145,22 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
         # 2. AI layer: job search and requirements
         def on_progress(stage, done, total):
             if stage == "search":
-                update_search(search_id, percent=25 + 15 * done // total,
-                              message=f"Searching the job portal ({done} of {total} searches)...")
+                io_manager.update_task(search_id, percent=25 + 15 * done // total,
+                                       message=f"Searching the job portal ({done} of {total} searches)...")
             else:
-                update_search(search_id, percent=40 + 50 * done // total,
-                              message=f"Analysing job listings ({done} of {total} batches)...")
+                io_manager.update_task(search_id, percent=40 + 50 * done // total,
+                                       message=f"Analysing job listings ({done} of {total} batches)...")
 
-        update_search(search_id, percent=25, message="Searching the job portal...")
+        io_manager.update_task(search_id, percent=25, message="Searching the job portal...")
         jobs = ai_manager.search_and_extract_jobs(profile, on_progress=on_progress)
 
         # 3. Logic layer
-        update_search(search_id, percent=92, message="Ranking jobs...")
+        io_manager.update_task(search_id, percent=92, message="Ranking jobs...")
         top_jobs = logic_manager.filter_and_rank(profile, jobs, filters, TOP_N)
         removed = logic_manager.count_removed(jobs, filters)
 
         # 4. Data layer (a failed save still shows the results)
-        update_search(search_id, percent=96, message="Saving results...")
+        io_manager.update_task(search_id, percent=96, message="Saving results...")
         save_failed = False
         try:
             database_functions.save_new_jobs(top_jobs, resume_name)
@@ -178,12 +170,16 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
 
         result = {"profile": profile, "jobs": top_jobs, "checked": len(jobs),
                   "removed": removed, "save_failed": save_failed}
-        update_search(search_id, status="done", percent=100, message="Done", result=result)
+        io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
+
+    except InterruptedError:  # cancelled (io_manager.update_task)
+        return  # the browser has already gone back to the form
 
     except Exception as error:
         logging.error(f"Search failed ({type(error).__name__}: {error})")
-        update_search(search_id, status="error",
-                      error=f"Something went wrong during the search ({type(error).__name__}). Please try again.")
+        io_manager.update_task(search_id, status="error",
+                               error=f"Something went wrong during the search ({type(error).__name__}). "
+                                     "Please try again.")
 
 
 if __name__ == "__main__":
