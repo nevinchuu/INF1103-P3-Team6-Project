@@ -26,6 +26,9 @@ MENU_OPTIONS = [MENU_SEARCH, MENU_RESULTS, MENU_DETAILS, MENU_EXIT]
 MENU_REFRESH = "Refresh this list"
 MENU_CANCEL = "Cancel"
 
+# Short words kept in capitals when an all-caps title is tidied, e.g. "IT SUPPORT" -> "IT Support"
+ACRONYMS = {"IT", "HR", "AI", "UX", "UI", "QA", "PR", "F&B", "SQL", "AWS", "SAP", "CRM", "ERP", "IOS", "PHP"}
+
 
 def display_message(text):
     """Print a normal message."""
@@ -375,6 +378,13 @@ def format_salary(job):
     if not isinstance(low, (int, float)) or not isinstance(high, (int, float)) or (low == 0 and high == 0):
         return "Not stated"
     return f"${low:,.0f} - ${high:,.0f} {job.get('salary_period', 'monthly')}"
+
+
+def tidy_title(title):
+    """Job titles written in capitals, e.g. "SERVICE CREW" -> "Service Crew". Others are left as they are."""
+    if not title.isupper():
+        return title
+    return " ".join(word if word in ACRONYMS else word.capitalize() for word in title.split())
 
 
 def display_profile(profile):
