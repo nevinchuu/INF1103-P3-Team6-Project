@@ -1,5 +1,6 @@
 import io
 import os
+import re
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
@@ -385,6 +386,12 @@ def tidy_title(title):
     if not title.isupper():
         return title
     return " ".join(word if word in ACRONYMS else word.capitalize() for word in title.split())
+
+
+def short_location(location):
+    """First place in a MyCareersFuture district, e.g. "D19 Hougang, Sengkang, ..." -> "Hougang"."""
+    place = re.sub(r"^D\d+\s+", "", location or "").split(",")[0].strip()
+    return place or location
 
 
 def display_profile(profile):
