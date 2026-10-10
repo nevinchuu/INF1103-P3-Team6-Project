@@ -45,18 +45,6 @@ def write_database(to_write):
         json.dump(to_write, file, indent=2)
     os.replace(temp_path, DATABASE_PATH)
 
-# iterate through array of jsons
-def display_database(to_print):
-
-    # create IDs before printing
-    to_print = reorder_ids(to_print)
-
-    # Just print lol
-    for i in to_print:
-        print(i)
-
-    return
-
 # will check by job URL before insertion into database
 def insert_no_duplicates(to_check, data_main):
     current_listings = []
