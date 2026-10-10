@@ -25,6 +25,7 @@ import io_manager
 import logic_manager
 
 TOP_N = 5  # jobs kept and saved per search
+JOBS_PER_SEARCH = 10  # listings fetched per job title; more means more AI batches (slower, costs more)
 
 app = Flask(__name__)  # templates/ and static/ are found next to this file
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # largest resume upload: 5 MB (app.js checks it too)
@@ -67,7 +68,7 @@ def results(search_id):
         return redirect(url_for("index", search=search_id))  # the search page picks up its progress
     if search["status"] != "done":
         return redirect(url_for("index"))
-    return render_template("results.html", **search["result"])
+    return render_template("results.html", **search["result"], jobs_per_search=JOBS_PER_SEARCH)
 
 
 @app.get("/saved")
@@ -161,7 +162,7 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
         # 1. Input layer: details the AI missed, from the form's optional fields
         profile = io_manager.fill_missing_data(profile, fallback_qualification, fallback_skills)
 
-        # 2. AI layer: job search and requirements
+        # 2. AI layer: job search and requirements. on_progress is how ai_manager reports each finished step
         def on_progress(stage, done, total):
             if stage == "search":
                 io_manager.update_task(search_id, percent=25 + 15 * done // total,
@@ -171,7 +172,20 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
                                        message=f"Analysing job listings ({done} of {total} batches)...")
 
         io_manager.update_task(search_id, percent=25, message="Searching the job portal...")
-        jobs = ai_manager.search_and_extract_jobs(profile, on_progress=on_progress)
+        summary = {}
+        jobs = ai_manager.search_and_extract_jobs(profile, limit_per_search=JOBS_PER_SEARCH, on_progress=on_progress,
+                                                  summary=summary)
+        logging.info(f"event=web_search stage=jobs summary={summary}")
+        if summary["listings_found"] == 0:
+            io_manager.update_task(search_id, status="error",
+                                   error="Could not get any job listings from MyCareersFuture. Check your internet "
+                                         "connection, or try again in a few minutes.")
+            return
+        if not jobs:
+            io_manager.update_task(search_id, status="error",
+                                   error=f"The AI could not analyse any of the {summary['listings_found']} listings "
+                                         "found. Check your API key, or wait a minute if the AI service is busy.")
+            return
 
         # 3. Logic layer
         io_manager.update_task(search_id, percent=92, message="Ranking jobs...")
