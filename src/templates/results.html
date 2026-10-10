@@ -53,6 +53,19 @@
   {% endif %}
 </section>
 
+{% if skill_gaps %}
+{# The skills missing from 2 or more of the top jobs (web_app.find_skill_gaps) #}
+<section class="card gap-card">
+  <h2>Skills worth building</h2>
+  <p class="muted small">These come up most often in the jobs below that you don't have yet.</p>
+  <ul class="gap-list">
+    {% for skill, count in skill_gaps %}
+    <li><span class="tag">{{ skill }}</span> <span class="muted small">missing in {{ count }} of {{ jobs | length }} matches</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <h2 class="section-title">Top matches</h2>
 {% if jobs %}
   {{ job_list(jobs) }}

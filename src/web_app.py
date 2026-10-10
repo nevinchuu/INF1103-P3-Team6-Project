@@ -68,7 +68,9 @@ def results(search_id):
         return redirect(url_for("index", search=search_id))  # the search page picks up its progress
     if search["status"] != "done":
         return redirect(url_for("index"))
-    return render_template("results.html", **search["result"], jobs_per_search=JOBS_PER_SEARCH)
+    result = search["result"]
+    return render_template("results.html", **result, jobs_per_search=JOBS_PER_SEARCH,
+                           skill_gaps=logic_manager.find_skill_gaps(result["jobs"]))
 
 
 @app.get("/saved")

@@ -350,6 +350,11 @@ details.optional .grid { margin-top: 14px; }
 .stats dt { font-size: 0.78rem; color: var(--muted); }
 .stats dd { margin: 2px 0 0; font-weight: 600; }
 
+/* ---------- Skill gaps (results page) ---------- */
+.gap-card p { margin-top: 4px; }
+.gap-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+.gap-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+
 /* ---------- Tags ---------- */
 .tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .tag {
