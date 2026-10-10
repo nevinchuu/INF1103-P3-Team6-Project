@@ -215,9 +215,14 @@ if __name__ == "__main__":
             finally:
                 logging.info(f"event=menu choice={choice!r} outcome=finished")
 
-    except (KeyboardInterrupt, EOFError):
-        # Ctrl+C at the menu, or input closed: exit cleanly instead of printing a traceback
+    except KeyboardInterrupt:
+        # Ctrl+C at the menu: exit cleanly instead of printing a traceback
         io_manager.display_message("")
+
+    except EOFError:
+        # Input closed, e.g. Docker started without a keyboard attached: say how to get one
+        io_manager.display_message("\nNo keyboard input. In Docker, start the console with "
+                                   "'docker compose run --rm console' or 'docker run -it ...'.")
 
     finally:
         # Runs however the program ends, so the log always records it and the file is flushed

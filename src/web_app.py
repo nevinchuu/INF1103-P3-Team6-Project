@@ -43,6 +43,11 @@ TOP_N = 5  # jobs shown and saved per search, until the user picks another numbe
 JOBS_PER_SEARCH = 10  # listings fetched per job title; more means more AI batches (slower, costs more)
 SHOW_OPTIONS = [5, 10, 20]  # "Show" choices on the results page
 
+# Network address the server listens on. 127.0.0.1 = this computer only. The Docker image sets
+# WEB_HOST=0.0.0.0, because inside a container 127.0.0.1 can't be reached from outside it
+WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
+WEB_PORT = 5000
+
 app = Flask(__name__)  # templates/ and static/ are found next to this file
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # largest resume upload: 5 MB (app.js checks it too)
 
@@ -418,6 +423,6 @@ if __name__ == "__main__":
     # ai_manager turns on INFO logging when imported; show only warnings and errors
     logging.getLogger().setLevel(logging.WARNING)
     logging.getLogger("werkzeug").setLevel(logging.WARNING)  # hide a log line for every progress check
-    io_manager.display_message("Resume Job Matcher is running. Open http://127.0.0.1:5000 in your browser "
+    io_manager.display_message(f"Resume Job Matcher is running. Open http://127.0.0.1:{WEB_PORT} in your browser "
                                "(Ctrl+C to stop).")
-    app.run(host="127.0.0.1", port=5000)
+    app.run(host=WEB_HOST, port=WEB_PORT)

@@ -9,11 +9,17 @@
 .github/
 .vscode/
 .venv/
-__pycache__/
-*.pyc
+**/__pycache__/
+**/*.pyc
 
-# Saved jobs, logs and test output belong to each machine, not the image
+# Saved jobs, logs, resumes and test output belong to each machine, not the image
+# (resumes hold personal details; docker-compose.yml mounts the folder instead).
+# The one exception is the sample resume, so the app can be tried straight away
 data/
 logs/
+resumes/*
+!resumes/sample_resume_fintech.docx
 results/
 output_results/
+tests/
+handoff.md

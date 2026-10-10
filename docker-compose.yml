@@ -1,0 +1,33 @@
+# Run from the project root, with Docker Desktop (or Docker Engine) running:
+#   docker compose up --build web      the web app: open http://127.0.0.1:5000 (Ctrl+C to stop)
+#   docker compose run --rm console    the console app
+# API keys come from .env next to this file. It is read when the app starts, never built into the image.
+# Saved jobs, logs and resumes stay in ./data, ./logs and ./resumes on your computer.
+
+# Settings shared by both apps
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: jobmatcher
+  env_file:
+    - path: .env
+      required: false  # without it the app still starts; a search then says which key is missing
+  volumes:
+    - ./data:/app/data
+    - ./logs:/app/logs
+    - ./resumes:/app/resumes
+  init: true  # passes Ctrl+C and docker stop on to Python, so the app stops at once and cleanly
+
+services:
+  web:
+    <<: *app
+    command: ["python", "src/web_app.py"]
+    ports:
+      - "127.0.0.1:5000:5000"  # only this computer can open the web app
+
+  console:
+    <<: *app
+    stdin_open: true  # keyboard input, like docker run -it
+    tty: true
+    profiles: ["console"]  # started only by "docker compose run console", not by "docker compose up"
