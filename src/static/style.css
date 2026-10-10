@@ -364,6 +364,9 @@ details.optional .grid { margin-top: 14px; }
 .btn-ghost:is(a):hover { background: var(--surface-2); color: var(--text); }
 .saved-note { margin: -4px 0 12px; }
 
+/* ---------- Saved jobs toolbar ---------- */
+.toolbar { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; margin-bottom: 16px; }
+
 /* ---------- Tags ---------- */
 .tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .tag {
@@ -433,7 +436,10 @@ details.optional .grid { margin-top: 14px; }
 .facts dt { font-size: 0.78rem; color: var(--muted); }
 .facts dd { margin: 2px 0 0; font-weight: 500; }
 .skill-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 24px; }
-.job-body .btn { margin-top: 22px; height: 38px; font-size: 0.9rem; }
+.job-list-saved .job-body { padding-left: 20px; }
+.job-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.job-actions form { margin: 0; }
+.job-body .btn { height: 38px; font-size: 0.9rem; }
 
 /* ---------- Small screens ---------- */
 @media (max-width: 680px) {
@@ -446,6 +452,8 @@ details.optional .grid { margin-top: 14px; }
   .card { padding: 18px; }
   .job-card summary { flex-wrap: wrap; padding: 16px; }
   .job-side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 12px; width: 100%; padding-left: 46px; justify-content: space-between; }
+  .job-list-saved .job-side { padding-left: 0; }
+  .job-list-saved .job-body { padding-left: 16px; }
   .chevron { display: none; }
   .job-body { padding: 0 16px 18px; }
   .form-actions .btn { width: 100%; }

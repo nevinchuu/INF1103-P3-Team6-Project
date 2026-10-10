@@ -8,15 +8,21 @@
   <div>
     <h1>Saved jobs</h1>
     <p class="lead">
-      {% if jobs %}{{ jobs | length }} jobs saved from your searches. Select a job to see the details.
+      {% if total %}{{ total }} jobs saved from your searches. Select a job to see the details.
       {% else %}Jobs from your searches are saved here.{% endif %}
     </p>
   </div>
   <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
 </div>
 
-{% if jobs %}
-  {{ job_list(jobs) }}
+{% if total %}
+  <div class="toolbar">
+    <form action="{{ url_for('clear_saved') }}" method="post" id="clear-form" data-total="{{ total }}">
+      <button class="btn btn-ghost" type="submit">Clear all</button>
+    </form>
+  </div>
+
+  {{ job_list(jobs, saved=True) }}
 {% else %}
   <div class="empty card">
     <h3>No saved jobs yet</h3>
@@ -24,4 +30,8 @@
     <a class="btn btn-primary" href="{{ url_for('index') }}">Find jobs</a>
   </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if total %}<script src="{{ url_for('static', filename='saved.js') }}"></script>{% endif %}
 {% endblock %}

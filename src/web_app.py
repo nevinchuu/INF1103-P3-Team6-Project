@@ -117,7 +117,30 @@ def results(search_id):
 @app.get("/saved")
 def saved():
     """Every job saved by the data layer."""
-    return render_template("saved.html", jobs=database_functions.read_saved_jobs())
+    jobs = database_functions.read_saved_jobs()
+    return render_template("saved.html", jobs=jobs, total=len(jobs))
+
+
+@app.post("/saved/remove")
+def remove_saved():
+    """Removes one saved job, found by its link (IDs change after every removal)."""
+    try:
+        database_functions.remove_saved_job(request.form.get("job_url", ""))
+    except Exception as error:
+        logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
+        abort(500)
+    return redirect(url_for("saved"))
+
+
+@app.post("/saved/clear")
+def clear_saved():
+    """Removes every saved job."""
+    try:
+        database_functions.clear_saved_jobs()
+    except Exception as error:
+        logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
+        abort(500)
+    return redirect(url_for("saved"))
 
 
 @app.errorhandler(404)

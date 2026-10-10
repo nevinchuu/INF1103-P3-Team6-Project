@@ -1,16 +1,17 @@
 {# Shared job list, used by results.html and saved.html:
    {% from "_jobs.html" import job_list %} ... {{ job_list(jobs) }}
+   saved=True leaves out the rank and adds a Remove button.
    Facts the portal doesn't give ("Not specified") are left out. #}
 
-{% macro job_list(jobs) %}
-<ol class="job-list">
+{% macro job_list(jobs, saved=False) %}
+<ol class="job-list{% if saved %} job-list-saved{% endif %}">
   {% for job in jobs %}
   {% set required = job.required_skills | length %}
   {% set matched = job.matched_skills | length %}
   <li>
     <details class="job-card">
       <summary>
-        <span class="job-rank">{{ loop.index }}</span>
+        {% if not saved %}<span class="job-rank">{{ loop.index }}</span>{% endif %}
         <span class="job-main">
           <span class="job-title">{{ job.title | tidy_title }}</span>
           <span class="job-company">{{ job.company }} · <span title="{{ job.location }}">{{ job.location | short_location }}</span></span>
@@ -57,10 +58,18 @@
           </div>
         </div>
 
-        <a class="btn btn-secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">
-          View on MyCareersFuture
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>
-        </a>
+        <div class="job-actions">
+          <a class="btn btn-secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">
+            View on MyCareersFuture
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>
+          </a>
+          {% if saved %}
+          <form action="{{ url_for('remove_saved') }}" method="post">
+            <input type="hidden" name="job_url" value="{{ job.job_url }}">
+            <button class="btn btn-ghost" type="submit">Remove</button>
+          </form>
+          {% endif %}
+        </div>
       </div>
     </details>
   </li>
