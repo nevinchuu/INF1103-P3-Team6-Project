@@ -401,6 +401,12 @@ def experience_text(years):
     return f"{years}+ year{'s' if years != 1 else ''}"
 
 
+def same_skill(job_skill, candidate_skill):
+    """True if two skill names are the same apart from case and spaces, e.g. "SQL" and "sql",
+    so a match under another name ("Stakeholder Management" by "Stakeholder Communication") can be shown."""
+    return job_skill.strip().lower() == candidate_skill.strip().lower()
+
+
 def display_profile(profile):
     """Show what the AI found in the resume."""
     display_header("YOUR PROFILE")
