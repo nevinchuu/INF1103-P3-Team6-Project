@@ -1,12 +1,18 @@
 import json
 import logging
 import os
+import tempfile
 import time
 
 json_database = []
 
 # The database file lives in <project root>/data/, wherever the program is run from
 DATABASE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "job_listings.json")
+
+# How often to retry swapping in a new file when Windows reports it as locked
+# (e.g. an antivirus or OneDrive scan has it open for a moment), and the wait between tries
+REPLACE_ATTEMPTS = 5
+REPLACE_WAIT_SECONDS = 0.2
 
 
 # keeps a broken database as a dated backup instead of overwriting it,
@@ -51,13 +57,27 @@ def write_database(to_write):
     to_write = reorder_ids(to_write)
 
     # write to a temporary file first, then swap it in. If writing fails part way,
-    # the old database is left untouched instead of being emptied or half-written
+    # the old database is left untouched instead of being emptied or half-written.
+    # Each save gets its own temporary file, so two saves never write into the same one
     # (indent=2 keeps the file readable)
     os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
-    temp_path = DATABASE_PATH + ".tmp"
-    with open(temp_path, "w", encoding="utf-8") as file:
-        json.dump(to_write, file, indent=2)
-    os.replace(temp_path, DATABASE_PATH)
+    file_descriptor, temp_path = tempfile.mkstemp(dir=os.path.dirname(DATABASE_PATH), suffix=".tmp")
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as file:
+            json.dump(to_write, file, indent=2)
+        for attempt in range(1, REPLACE_ATTEMPTS + 1):
+            try:
+                os.replace(temp_path, DATABASE_PATH)
+                break
+            except PermissionError:
+                # Windows: another program has the file open for a moment; wait and try again
+                if attempt == REPLACE_ATTEMPTS:
+                    raise
+                time.sleep(REPLACE_WAIT_SECONDS)
+    finally:
+        # after a failed save, don't leave the temporary file behind
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 # loads every saved job, skipping anything in the file that is not a job record.
