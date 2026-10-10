@@ -7,6 +7,7 @@ json_database = []
 # The database file lives in <project root>/data/, wherever the program is run from
 DATABASE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "job_listings.json")
 
+
 def read_database():
     temp_arr = []
 
@@ -32,7 +33,6 @@ def read_database():
 
 # any error is raised to the caller (main.py / web_app.py), which tells the user the save failed
 def write_database(to_write):
-
     # create IDs for entries before writing to database
     to_write = reorder_ids(to_write)
 
@@ -45,11 +45,25 @@ def write_database(to_write):
         json.dump(to_write, file, indent=2)
     os.replace(temp_path, DATABASE_PATH)
 
+
 # loads every saved job, skipping anything in the file that is not a job record.
 # Used on startup. A missing or corrupt file gives an empty list; a file that cannot be
 # opened at all raises OSError, which the caller reports
 def read_saved_jobs():
     return [job for job in read_database() if isinstance(job, dict)]
+
+
+# query: saved jobs whose title, company or location contain every word in keyword,
+# e.g. "data analyst" finds "Senior Data Analyst" but not "Data Engineer". Case does not matter
+def search_jobs(data_main, keyword):
+    words = keyword.lower().split()
+    results = []
+    for job in data_main:
+        text = " ".join(str(job.get(field, "")) for field in ("title", "company", "location")).lower()
+        if all(word in text for word in words):
+            results.append(job)
+    return results
+
 
 # will check by job URL before insertion into database
 def insert_no_duplicates(to_check, data_main):
@@ -62,32 +76,31 @@ def insert_no_duplicates(to_check, data_main):
     # loop through listings to input, check if job url is in current_listings
     for i in to_check:
 
-        #if job url is in, it is a duplicate and skip
+        # if job url is in, it is a duplicate and skip
         if i["job_url"] in current_listings:
             continue
 
-        #else append listing to database and add that job url to current_listings
+        # else append listing to database and add that job url to current_listings
         data_main.append(i)
         current_listings.append(i["job_url"])
 
-    #set database to new database and create IDs for them
+    # set database to new database and create IDs for them
     data_main = reorder_ids(data_main)
     return data_main
 
+
 # re-order the IDs of job listings after removals
 def reorder_ids(data_main):
-
-    #loop through data_main and assign IDs to each JSON within the list
+    # loop through data_main and assign IDs to each JSON within the list
     for i in range(len(data_main)):
         data_main[i]["ID"] = i
 
     return data_main
 
 
-#iterate through to_remove, an array of integers and remove specified IDs from database
-#example input [1,12,35,22]
-def remove_by_ID(to_remove,data_main):
-
+# iterate through to_remove, an array of integers and remove specified IDs from database
+# example input [1,12,35,22]
+def remove_by_ID(to_remove, data_main):
     # Create IDs for entries if IDs doesnt exist
     data_main = reorder_ids(data_main)
 
