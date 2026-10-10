@@ -459,6 +459,18 @@ def prompt_missing_data(profile):
     return profile
 
 
+def fill_missing_data(profile, qualification, skills_text):
+    """The web version of prompt_missing_data: fill in what the AI could not find in the resume
+    from the search form's optional fields. skills_text is comma-separated, e.g. "Python, Excel"."""
+    if profile["highest_qualification"] == "None" and qualification in EDUCATION_LEVELS:
+        profile["highest_qualification"] = qualification
+        profile["qualification_detail"] = profile["qualification_detail"] or qualification
+    skills = [skill.strip() for skill in skills_text.split(",") if skill.strip()]
+    if not profile["core_skills"] and skills:
+        profile["core_skills"] = skills
+    return profile
+
+
 def run_search(process_function, record):
     """Run one search, offering a retry if it fails."""
     while True:
