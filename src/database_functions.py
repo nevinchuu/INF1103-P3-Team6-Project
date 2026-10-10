@@ -141,7 +141,7 @@ def remove_by_ID(to_remove, data_main):
     data_main = reorder_ids(data_main)
 
     # Iterate and remove
-    for i in to_remove:
+    for i in sorted(set(to_remove), reverse=True):
         data_main.pop(i)
 
     return reorder_ids(data_main)
