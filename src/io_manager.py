@@ -230,6 +230,32 @@ def list_resumes():
     return names
 
 
+def unused_resume_path(filename):
+    """Path in the resumes folder that won't replace a saved resume:
+    resume.pdf, or resume_2.pdf, resume_3.pdf... if that name is taken."""
+    stem, extension = os.path.splitext(filename)
+    path = os.path.join(RESUME_FOLDER, filename)
+    number = 2
+    while os.path.exists(path):
+        path = os.path.join(RESUME_FOLDER, f"{stem}_{number}{extension}")
+        number += 1
+    return path
+
+
+def resume_path_from_form(uploaded_name, chosen_name):
+    """Where the web form's resume is. Return (path, problem).
+    uploaded_name: a safe file name for an upload (the caller saves the file to path), or "" for none.
+    chosen_name: the saved resume picked from the list, used when nothing was uploaded."""
+    if uploaded_name:
+        if os.path.splitext(uploaded_name)[1].lower() not in ALLOWED_EXTENSIONS:
+            return "", "Please upload a PDF or Word (.docx) file."
+        os.makedirs(RESUME_FOLDER, exist_ok=True)
+        return unused_resume_path(uploaded_name), ""
+    if chosen_name not in list_resumes():
+        return "", "Please choose a resume or upload one."
+    return os.path.join(RESUME_FOLDER, chosen_name), ""
+
+
 def prompt_resume():
     """Let the user pick a resume and return its path and text."""
     while True:
