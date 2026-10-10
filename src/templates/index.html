@@ -7,7 +7,8 @@
   <p class="lead">Choose a resume and set your preferences. The AI reads it, searches MyCareersFuture and ranks the best matches for you.</p>
 </div>
 
-<form id="task-form" action="{{ url_for('start_search') }}" method="post" enctype="multipart/form-data">
+<form id="task-form" action="{{ url_for('start_search') }}" method="post" enctype="multipart/form-data"
+      data-max-upload="{{ max_upload }}">
   <section class="card">
     <div class="card-head">
       <span class="step">1</span>
@@ -33,6 +34,8 @@
         <input id="resume_file" name="resume_file" type="file" accept=".pdf,.docx">
       </div>
     </div>
+    {# app.js fills this in once a file is picked #}
+    <p id="resume-note" class="muted small resume-note" hidden></p>
   </section>
 
   <section class="card">

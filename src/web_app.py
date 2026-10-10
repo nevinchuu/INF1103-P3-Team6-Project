@@ -27,7 +27,7 @@ import logic_manager
 TOP_N = 5  # jobs kept and saved per search
 
 app = Flask(__name__)  # templates/ and static/ are found next to this file
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # largest resume upload: 5 MB
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # largest resume upload: 5 MB (app.js checks it too)
 
 # io_manager's text helpers, so templates show salaries and lists the same way as the console
 app.jinja_env.globals.update(format_salary=io_manager.format_salary, join_list=io_manager.join_list)
@@ -48,6 +48,7 @@ def index():
         education_levels=io_manager.EDUCATION_LEVELS[1:],  # leave out "None"
         max_salary=io_manager.MAX_SALARY,
         max_years=io_manager.MAX_EXPERIENCE_YEARS,
+        max_upload=app.config["MAX_CONTENT_LENGTH"],
     )
 
 
@@ -68,6 +69,13 @@ def results(search_id):
 def saved():
     """Every job saved by the data layer."""
     return render_template("saved.html", jobs=database_functions.read_saved_jobs())
+
+
+@app.errorhandler(413)
+def too_large(error):
+    """Uploads over MAX_CONTENT_LENGTH. Sent as JSON because app.js sends the form."""
+    megabytes = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)
+    return jsonify(error=f"That file is too large. Please upload a resume under {megabytes} MB."), 413
 
 
 # ==========================================
