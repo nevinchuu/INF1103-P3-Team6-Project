@@ -237,6 +237,7 @@ details.optional .grid { margin-top: 14px; }
 }
 .form-actions .alert { flex: 1 1 100%; }
 .resume-note { margin-top: 12px; }
+.privacy-note { margin: 16px 0 0; }
 
 /* ---------- Buttons ---------- */
 .btn {

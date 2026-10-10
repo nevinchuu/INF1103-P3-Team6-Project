@@ -49,6 +49,7 @@ def index():
         max_salary=io_manager.MAX_SALARY,
         max_years=io_manager.MAX_EXPERIENCE_YEARS,
         max_upload=app.config["MAX_CONTENT_LENGTH"],
+        ai_name=ai_manager.provider_name(),
     )
 
 
