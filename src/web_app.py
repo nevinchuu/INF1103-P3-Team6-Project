@@ -86,33 +86,31 @@ def saved():
 @app.post("/search")
 def start_search():
     """Checks the form, then starts the search in a background thread. Returns {"search_id"}."""
-    path, problem = save_or_find_resume()
+    # 1. Input layer: the uploaded resume (saved into the resumes folder) or the one picked from the list.
+    #    A name with nothing usable left after secure_filename keeps no extension, so it is rejected.
+    upload = request.files.get("resume_file")
+    uploaded_name = (secure_filename(upload.filename) or "unnamed") if upload and upload.filename else ""
+    path, problem = io_manager.resume_path_from_form(uploaded_name, request.form.get("resume_choice", ""))
+    if problem:
+        return jsonify(error=problem), 400
+    if uploaded_name:
+        upload.save(path)
+    resume_text, problem = io_manager.load_resume(path)
     if problem:
         return jsonify(error=problem), 400
 
-    # 1. Input layer: same checks as the console version
-    problem = io_manager.check_resume_file(path)
+    filters, problem = io_manager.check_filters(request.form)
     if problem:
         return jsonify(error=problem), 400
-    resume_text = io_manager.read_resume(path)
-    if len(resume_text) < io_manager.MIN_RESUME_CHARS:
-        return jsonify(error="Could not read enough text from that file. It may be a scanned image, "
-                             "password-protected or corrupted. Please try another file."), 400
-
-    filters, problem = read_filters(request.form)
-    if problem:
-        return jsonify(error=problem), 400
-
-    fallback = {
-        "qualification": request.form.get("fallback_qualification", ""),
-        "skills": [s.strip() for s in request.form.get("fallback_skills", "").split(",") if s.strip()],
-    }
 
     search_id = uuid.uuid4().hex
     with searches_lock:
         searches[search_id] = {"status": "running", "percent": 0, "message": "Starting...",
                                "result": None, "error": None}
-    threading.Thread(target=run_search, args=(search_id, resume_text, filters, fallback), daemon=True).start()
+    threading.Thread(target=run_search, daemon=True,
+                     args=(search_id, resume_text, filters,
+                           request.form.get("fallback_qualification", ""),
+                           request.form.get("fallback_skills", ""))).start()
     return jsonify(search_id=search_id)
 
 
@@ -131,57 +129,12 @@ def progress(search_id):
 # HELPERS
 # ==========================================
 
-def save_or_find_resume() -> tuple[str, str]:
-    """Returns (path, problem). Saves an uploaded resume into the resumes folder,
-    or uses the one picked from the list."""
-    upload = request.files.get("resume_file")
-    if upload and upload.filename:
-        filename = secure_filename(upload.filename)
-        if os.path.splitext(filename)[1].lower() not in io_manager.ALLOWED_EXTENSIONS:
-            return "", "Please upload a PDF or Word (.docx) file."
-        os.makedirs(io_manager.RESUME_FOLDER, exist_ok=True)
-        path = os.path.join(io_manager.RESUME_FOLDER, filename)
-        upload.save(path)
-        return path, ""
-
-    name = request.form.get("resume_choice", "")
-    if name not in io_manager.list_resumes():
-        return "", "Please choose a resume or upload one."
-    return os.path.join(io_manager.RESUME_FOLDER, name), ""
-
-
-def read_filters(form) -> tuple[dict, str]:
-    """Returns (filters, problem), with filters in the same shape as io_manager.prompt_filters."""
-    numbers = {}
-    limits = {
-        "min_salary": (0, io_manager.MAX_SALARY),
-        "max_salary": (io_manager.MAX_SALARY, io_manager.MAX_SALARY),
-        "max_years_experience": (io_manager.MAX_EXPERIENCE_YEARS, io_manager.MAX_EXPERIENCE_YEARS),
-    }
-    for name, (default, maximum) in limits.items():
-        text = form.get(name, "").strip().replace(",", "").replace("$", "")
-        try:
-            numbers[name] = int(text) if text else default
-        except ValueError:
-            return {}, "Salary and experience must be whole numbers."
-        if not 0 <= numbers[name] <= maximum:
-            return {}, f"Please keep {name.replace('_', ' ')} between 0 and {maximum}."
-    if numbers["max_salary"] < numbers["min_salary"]:
-        return {}, "Maximum salary cannot be lower than minimum salary."
-
-    job_type = form.get("job_type", io_manager.ANY)
-    work_arrangement = form.get("work_arrangement", io_manager.ANY)
-    if job_type not in io_manager.JOB_TYPES or work_arrangement not in io_manager.WORK_ARRANGEMENTS:
-        return {}, "Please pick a job type and work arrangement from the lists."
-    return {**numbers, "job_type": job_type, "work_arrangement": work_arrangement}, ""
-
-
 def update_search(search_id: str, **changes) -> None:
     with searches_lock:
         searches[search_id].update(changes)
 
 
-def run_search(search_id: str, resume_text: str, filters: dict, fallback: dict) -> None:
+def run_search(search_id, resume_text, filters, fallback_qualification, fallback_skills):
     """Runs the AI, logic and data layers in a background thread, reporting progress as it goes.
 
     Progress bar: 0-25% reading the resume, 25-40% portal searches, 40-90% AI batches,
@@ -197,12 +150,8 @@ def run_search(search_id: str, resume_text: str, filters: dict, fallback: dict) 
                                 "and API key, or wait a minute if the AI service is busy.")
             return
 
-        # Web version of io_manager.prompt_missing_data: use what the user typed in the form
-        if profile["highest_qualification"] == "None" and fallback["qualification"] in io_manager.EDUCATION_LEVELS:
-            profile["highest_qualification"] = fallback["qualification"]
-            profile["qualification_detail"] = profile["qualification_detail"] or fallback["qualification"]
-        if not profile["core_skills"] and fallback["skills"]:
-            profile["core_skills"] = fallback["skills"]
+        # 1. Input layer: details the AI missed, from the form's optional fields
+        profile = io_manager.fill_missing_data(profile, fallback_qualification, fallback_skills)
 
         # 2. AI layer: job search and requirements
         def on_progress(stage, done, total):
