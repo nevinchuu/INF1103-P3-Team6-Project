@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Page not found · Resume Job Matcher{% endblock %}
+
+{% block content %}
+<div class="empty card">
+  <h3>This page isn't available</h3>
+  <p class="muted">The link may be wrong, or these search results have expired. Results are kept only until
+    the app restarts, but your top matches are still in Saved jobs.</p>
+  <div class="empty-actions">
+    <a class="btn btn-primary" href="{{ url_for('index') }}">New search</a>
+    <a class="btn btn-secondary" href="{{ url_for('saved') }}">Saved jobs</a>
+  </div>
+</div>
+{% endblock %}

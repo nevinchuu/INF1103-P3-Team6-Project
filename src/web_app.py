@@ -72,6 +72,12 @@ def saved():
     return render_template("saved.html", jobs=database_functions.read_saved_jobs())
 
 
+@app.errorhandler(404)
+def not_found(error):
+    """Friendly page for unknown links, e.g. results from before the server restarted."""
+    return render_template("not_found.html"), 404
+
+
 @app.errorhandler(413)
 def too_large(error):
     """Uploads over MAX_CONTENT_LENGTH. Sent as JSON because app.js sends the form."""
