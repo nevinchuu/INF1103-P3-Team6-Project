@@ -309,6 +309,33 @@ def prompt_filters():
     }
 
 
+def check_filters(values):
+    """The web version of prompt_filters: check filters typed into a form (any dict-like of text).
+    Return (filters, problem), with filters in the same shape as prompt_filters."""
+    numbers = {}
+    limits = {
+        "min_salary": (0, MAX_SALARY),
+        "max_salary": (MAX_SALARY, MAX_SALARY),
+        "max_years_experience": (MAX_EXPERIENCE_YEARS, MAX_EXPERIENCE_YEARS),
+    }
+    for name, (default, maximum) in limits.items():
+        text = values.get(name, "").strip().replace(",", "").replace("$", "")
+        try:
+            numbers[name] = int(text) if text else default
+        except ValueError:
+            return {}, "Salary and experience must be whole numbers."
+        if not 0 <= numbers[name] <= maximum:
+            return {}, f"Please keep {name.replace('_', ' ')} between 0 and {maximum}."
+    if numbers["max_salary"] < numbers["min_salary"]:
+        return {}, "Maximum salary cannot be lower than minimum salary."
+
+    job_type = values.get("job_type", ANY)
+    work_arrangement = values.get("work_arrangement", ANY)
+    if job_type not in JOB_TYPES or work_arrangement not in WORK_ARRANGEMENTS:
+        return {}, "Please pick a job type and work arrangement from the lists."
+    return {**numbers, "job_type": job_type, "work_arrangement": work_arrangement}, ""
+
+
 def collect_input(ai_name="an AI service"):
     """Collect the resume and filters for one search. ai_name is shown in the privacy notice."""
     display_header("NEW SEARCH")
