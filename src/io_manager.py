@@ -142,6 +142,18 @@ def read_resume(path):
     return text.strip()
 
 
+def load_resume(path):
+    """Check a resume file and read it. Return (text, problem); problem is empty if it worked."""
+    problem = check_resume_file(path)
+    if problem:
+        return "", problem
+    text = read_resume(path)
+    if len(text) < MIN_RESUME_CHARS:
+        return "", ("Could not read enough text from that file. It may be a scanned image, "
+                    "password-protected or corrupted. Please try another file.")
+    return text, ""
+
+
 def list_resumes():
     """Return the PDF and Word files in the resumes folder."""
     try:
@@ -176,15 +188,9 @@ def prompt_resume():
             continue
 
         path = os.path.join(RESUME_FOLDER, choice)
-        problem = check_resume_file(path)
+        text, problem = load_resume(path)
         if problem:
             display_error(problem)
-            continue
-
-        text = read_resume(path)
-        if len(text) < MIN_RESUME_CHARS:
-            display_error("Could not read enough text from that file. It may be a scanned image, "
-                          "password-protected or corrupted. Please try another file.")
             continue
 
         display_message(f"Resume loaded ({len(text)} characters).")
