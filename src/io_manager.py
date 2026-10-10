@@ -562,3 +562,15 @@ def cancel_task(task_id):
         task = tasks.get(task_id)
         if task is not None and task["status"] == "running":
             task["status"] = "cancelled"
+
+
+def find_recent_job(job_url):
+    """A job by its link from a finished search still in memory, with the resume that found it, or None."""
+    with tasks_lock:
+        results = [task["result"] for task in tasks.values()
+                   if task["status"] == "done" and "all_jobs" in task["result"]]
+    for result in results:
+        for job in result["all_jobs"]:
+            if job["job_url"] == job_url:
+                return {**job, "resume": result["resume"]}
+    return None
