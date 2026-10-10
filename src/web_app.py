@@ -4,6 +4,15 @@ Run from the project root, then open http://127.0.0.1:5000
 
     python src/web_app.py
 
+Like main.py, this file only connects the layers: every check, calculation and save is a
+function in one of them. The only functions here are the ones Flask and the background
+threads need: a route for each page, and run_search / run_tailor, the work each thread does.
+
+    1. Input/output layer (io_manager)          -> resume files, form checks, display text, progress
+    2. AI layer           (ai_manager)          -> candidate profile, job records, tailored resume
+    3. Logic layer        (logic_manager)       -> filtered and ranked jobs, skill gaps, keyword coverage
+    4. Data layer         (database_functions)  -> saved jobs
+
 A search runs in a background thread so the page can show a progress bar:
 the browser starts it with POST /search, then asks GET /progress/<search_id>
 every second until it is done and opens /results/<search_id>.
