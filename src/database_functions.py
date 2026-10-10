@@ -45,6 +45,12 @@ def write_database(to_write):
         json.dump(to_write, file, indent=2)
     os.replace(temp_path, DATABASE_PATH)
 
+# loads every saved job, skipping anything in the file that is not a job record.
+# Used on startup. A missing or corrupt file gives an empty list; a file that cannot be
+# opened at all raises OSError, which the caller reports
+def read_saved_jobs():
+    return [job for job in read_database() if isinstance(job, dict)]
+
 # will check by job URL before insertion into database
 def insert_no_duplicates(to_check, data_main):
     current_listings = []
