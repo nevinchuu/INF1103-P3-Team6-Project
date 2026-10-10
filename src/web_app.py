@@ -247,5 +247,6 @@ if __name__ == "__main__":
     # ai_manager turns on INFO logging when imported; show only warnings and errors
     logging.getLogger().setLevel(logging.WARNING)
     logging.getLogger("werkzeug").setLevel(logging.WARNING)  # hide a log line for every progress check
-    print("Resume Job Matcher is running. Open http://127.0.0.1:5000 in your browser (Ctrl+C to stop).")
+    io_manager.display_message("Resume Job Matcher is running. Open http://127.0.0.1:5000 in your browser "
+                               "(Ctrl+C to stop).")
     app.run(host="127.0.0.1", port=5000)
