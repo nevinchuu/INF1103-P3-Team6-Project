@@ -174,8 +174,12 @@ def remove_by_ID(to_remove, data_main):
     # Create IDs for entries if IDs doesnt exist
     data_main = reorder_ids(data_main)
 
-    # Iterate and remove
-    for i in sorted(set(to_remove), reverse=True):
-        data_main.pop(i)
+    # Remove the highest IDs first, so a removal never shifts the IDs still to be removed
+    # ([1, 3] would otherwise remove jobs 1 and 4). IDs that don't exist are skipped: a negative
+    # one would remove a job counted from the end, and one past the end would raise IndexError
+    # (type() rather than isinstance(), because True counts as 1)
+    valid_ids = {job_id for job_id in to_remove if type(job_id) is int and 0 <= job_id < len(data_main)}
+    for job_id in sorted(valid_ids, reverse=True):
+        data_main.pop(job_id)
 
     return reorder_ids(data_main)
