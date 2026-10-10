@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Tailored resume · Resume Job Matcher{% endblock %}
+
+{% block content %}
+<div class="page-head page-head-row">
+  <div>
+    <p class="eyebrow">Tailored resume</p>
+    <h1>{{ job.title | tidy_title }}</h1>
+    <p class="lead">{{ job.company }} · from {{ resume_name }}</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-secondary" href="{{ url_for('tailor', job_url=job.job_url) }}">Try again</a>
+    <a class="btn btn-primary" href="{{ url_for('download_tailored', search_id=search_id) }}">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5M5 20h14"/></svg>
+      Download .docx
+    </a>
+  </div>
+</div>
+
+{% if not is_open %}
+<p class="alert alert-error" role="alert">MyCareersFuture says this job is no longer open.</p>
+{% endif %}
+<p class="alert alert-info">Read it through before you send it. The AI only reworded what's in your resume,
+  but you know best what's accurate.{% if not had_description %} The full job description couldn't be fetched,
+  so this was tailored from the job's title and skills only.{% endif %}</p>
+
+{% if required %}
+<section class="card">
+  <h2>Job keywords in your resume</h2>
+  <p class="muted small">Key skills for this job that appear word for word in your resume. Treat this as a guide, not a target:
+    only add a skill if your experience really shows it.</p>
+  <div class="coverage">
+    <div><span class="coverage-num">{{ covered_before | length }}/{{ required | length }}</span><span class="muted small">before</span></div>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" class="muted"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+    <div><span class="coverage-num coverage-after">{{ covered_after | length }}/{{ required | length }}</span><span class="muted small">after</span></div>
+  </div>
+  <ul class="tags">
+    {% for skill in required %}
+    {% if skill in covered_after %}<li class="tag tag-good">{{ skill }}</li>{% else %}<li class="tag">{{ skill }}</li>{% endif %}
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<div class="split">
+  <section class="card">
+    <h2>What changed</h2>
+    <ul class="plain-list change-list">
+      {% for change in changes %}<li>{{ change }}</li>{% else %}<li>No notes from the AI.</li>{% endfor %}
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Not added</h2>
+    <p class="muted small">The job asks for these but your resume doesn't show them, so they were left out.
+      Add any you really have yourself, or consider learning them.</p>
+    <ul class="tags not-added">
+      {% for skill in not_added %}<li class="tag">{{ skill }}</li>{% else %}<li class="muted small">Nothing. Your resume covers every key skill.</li>{% endfor %}
+    </ul>
+    {% if notes %}
+    <h4>Removed by the safety check</h4>
+    <ul class="plain-list">{% for note in notes %}<li>{{ note }}</li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+</div>
+
+<h2 class="section-title">Preview</h2>
+<article class="paper" aria-label="Tailored resume preview">
+  {% if resume.name %}<h3 class="paper-name">{{ resume.name }}</h3>{% endif %}
+  {% if resume.contact %}<p class="paper-contact">{{ resume.contact }}</p>{% endif %}
+
+  {% if resume.summary %}
+  <h4 class="paper-heading">Summary</h4>
+  <p>{{ resume.summary }}</p>
+  {% endif %}
+
+  {% if resume.skills %}
+  <h4 class="paper-heading">Skills</h4>
+  <p>{{ resume.skills | join(" · ") }}</p>
+  {% endif %}
+
+  {% for section in resume.sections %}
+  <h4 class="paper-heading">{{ section.heading }}</h4>
+  {% for entry in section.entries %}
+  <div class="paper-entry">
+    <p class="paper-entry-head">
+      <span><strong>{{ entry.title }}</strong>{% if entry.organisation and entry.organisation != entry.title %}, {{ entry.organisation }}{% endif %}</span>
+      {% if entry.dates %}<em>{{ entry.dates }}</em>{% endif %}
+    </p>
+    {% if entry.bullets %}<ul>{% for bullet in entry.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+  {% endfor %}
+  {% endfor %}
+</article>
+
+<div class="form-actions">
+  <a class="btn btn-secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">View job on MyCareersFuture</a>
+  <a class="btn btn-primary" href="{{ url_for('download_tailored', search_id=search_id) }}">Download .docx</a>
+</div>
+{% endblock %}

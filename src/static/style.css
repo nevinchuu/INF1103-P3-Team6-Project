@@ -444,6 +444,50 @@ details.optional .grid { margin-top: 14px; }
 .job-actions form { margin: 0; }
 .job-body .btn { height: 38px; font-size: 0.9rem; }
 
+/* ---------- Tailor pages ---------- */
+.eyebrow { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin-bottom: 6px; }
+.head-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.field-hint { margin-top: 6px; }
+.check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.check-list li { position: relative; padding-left: 26px; }
+.check-list li::before { content: "✓"; position: absolute; left: 4px; color: var(--good); font-weight: 700; }
+.check-list li.check-no::before { content: "✕"; color: var(--error); }
+
+.coverage { display: flex; align-items: center; gap: 18px; margin: 16px 0; }
+.coverage > div { display: flex; flex-direction: column; }
+.coverage-num { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.coverage-after { color: var(--good); }
+
+.split { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 16px; }
+.split .card h2 + p, .split .card h2 + ul { margin-top: 10px; }
+.not-added { margin-top: 12px; }
+.change-list { color: var(--text); }
+.change-list li + li { margin-top: 6px; }
+
+/* A page-like preview of the tailored resume */
+.paper {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: var(--shadow), 0 8px 24px rgba(15, 23, 42, 0.06);
+  padding: 44px 48px;
+  font-size: 0.9rem;
+}
+.paper p { margin: 0 0 4px; }
+.paper-name { font-size: 1.5rem; text-align: center; }
+.paper-contact { text-align: center; color: var(--muted); margin-top: 4px !important; }
+.paper-heading {
+  margin: 20px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+}
+.paper-entry { margin-top: 10px; }
+.paper-entry-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 16px; }
+.paper-entry-head em { color: var(--muted); }
+.paper ul { margin: 4px 0 0; padding-left: 20px; }
+.paper li + li { margin-top: 2px; }
+
 /* ---------- Small screens ---------- */
 @media (max-width: 680px) {
   .stats { grid-template-columns: repeat(2, 1fr); }
@@ -460,4 +504,5 @@ details.optional .grid { margin-top: 14px; }
   .chevron { display: none; }
   .job-body { padding: 0 16px 18px; }
   .form-actions .btn { width: 100%; }
+  .paper { padding: 24px 20px; }
 }

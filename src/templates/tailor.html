@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_progress.html" import progress_panel %}
+
+{% block title %}Tailor your resume · Resume Job Matcher{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Tailor my resume</p>
+  <h1>{{ job.title | tidy_title }}</h1>
+  <p class="lead">{{ job.company }} · <span title="{{ job.location }}">{{ job.location | short_location }}</span> · {{ format_salary(job) }}</p>
+</div>
+
+<form id="task-form" action="{{ url_for('start_tailor') }}" method="post">
+  <input type="hidden" name="job_url" value="{{ job.job_url }}">
+
+  <section class="card">
+    <div class="card-head">
+      <span class="step">1</span>
+      <div>
+        <h2>Choose a resume</h2>
+        <p class="muted small">The AI rewrites it for this job. Your original file is not changed.</p>
+      </div>
+    </div>
+    {% if resumes %}
+    <div class="field">
+      <label for="resume_choice">Resume</label>
+      <select id="resume_choice" name="resume_choice">
+        {% for name in resumes %}<option value="{{ name }}" {% if name == chosen %}selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+      {% if job.resume and job.resume == chosen %}<p class="muted small field-hint">This is the resume that found this job.</p>{% endif %}
+    </div>
+    {% else %}
+    <p class="muted">No resumes yet. <a href="{{ url_for('index') }}">Upload one on the search page</a> first.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="step">2</span>
+      <div>
+        <h2>What the AI will do</h2>
+        <p class="muted small">One AI call, usually 20-40 seconds.</p>
+      </div>
+    </div>
+    <ul class="check-list">
+      <li>Write a short summary aimed at this job</li>
+      <li>Put your most relevant skills and experience first</li>
+      <li>Reword your points to use the job's language where your resume backs it up</li>
+      <li class="check-no">Never add skills, jobs, dates or numbers that aren't in your resume. Anything it tries to add is removed.</li>
+    </ul>
+    <p class="alert alert-info privacy-note">Your resume's text and this job's description are sent to {{ ai_name }}.
+      Remove anything you'd rather not share (e.g. your home address or NRIC) from the resume first.</p>
+  </section>
+
+  <div class="form-actions">
+    <p id="form-error" class="alert alert-error" role="alert" hidden></p>
+    <a class="btn btn-ghost" href="{{ url_for('saved') }}">Back to saved jobs</a>
+    <button id="task-button" class="btn btn-primary" type="submit" {% if not resumes %}disabled{% endif %}>Create tailored resume</button>
+  </div>
+</form>
+
+{{ progress_panel("Tailoring your resume", [
+  (0, "Getting the full job description"),
+  (25, "Rewriting your resume for this job"),
+  (92, "Checking nothing was made up"),
+]) }}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='progress.js') }}"></script>
+<script>setupTaskForm({ resultUrl: (id) => `/tailored/${id}` });</script>
+{% endblock %}

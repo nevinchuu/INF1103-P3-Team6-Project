@@ -10,15 +10,19 @@ every second until it is done and opens /results/<search_id>.
 The results page can change the filters afterwards (?min_salary=...&show=10):
 that only re-ranks the jobs the search already checked, with no new AI calls.
 
+"Tailor my resume" (/tailor?job_url=...) works the same way: POST /tailor starts it,
+the same /progress route reports on it, and /tailored/<id> shows the result.
+
 To add a page: add a route below and a template in src/templates/ that
 starts with {% extends "base.html" %}.
 """
 
+import io
 import logging
 import os
 import threading
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.utils import secure_filename
 
 import ai_manager
@@ -145,6 +149,46 @@ def clear_saved():
     return redirect(url_for("saved"))
 
 
+@app.get("/tailor")
+def tailor():
+    """Page to tailor a resume for one job (?job_url=...). The job comes from Saved jobs or a recent search."""
+    job_url = request.args.get("job_url", "")
+    job = (database_functions.find_by_url(database_functions.read_saved_jobs(), job_url)
+           or io_manager.find_recent_job(job_url))
+    if job is None:
+        abort(404)
+    resumes = io_manager.list_resumes()
+    chosen = job.get("resume") if job.get("resume") in resumes else (resumes[0] if resumes else "")
+    return render_template("tailor.html", job=job, resumes=resumes, chosen=chosen, ai_name=ai_manager.provider_name())
+
+
+@app.get("/tailored/<search_id>")
+def tailored(search_id):
+    """A finished tailored resume: what changed, what was left out, and a preview."""
+    search = io_manager.get_task(search_id)
+    if search is None:
+        abort(404)
+    if search["status"] == "running":
+        return redirect(url_for("tailor", job_url=search["job_url"], search=search_id))
+    if search["status"] != "done":
+        return redirect(url_for("tailor", job_url=search["job_url"]))
+    return render_template("tailored.html", search_id=search_id, **search["result"])
+
+
+@app.get("/tailored/<search_id>/download")
+def download_tailored(search_id):
+    """The tailored resume as a Word file, e.g. nevin_chua_Data_Analyst.docx."""
+    search = io_manager.get_task(search_id)
+    if search is None or search["status"] != "done":
+        abort(404)
+    result = search["result"]
+    stem = os.path.splitext(result["resume_name"])[0]
+    filename = secure_filename(f"{stem}_{result['job']['title']}.docx") or "tailored_resume.docx"
+    return send_file(io.BytesIO(io_manager.write_resume_docx(result["resume"])), as_attachment=True,
+                     download_name=filename,
+                     mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+
 @app.errorhandler(404)
 def not_found(error):
     """Friendly page for unknown links, e.g. results from before the server restarted."""
@@ -190,9 +234,36 @@ def start_search():
     return jsonify(search_id=search_id)
 
 
+@app.post("/tailor")
+def start_tailor():
+    """Starts tailoring a resume for one job in a background thread. Returns {"search_id"};
+    progress and cancelling use the same routes as a search."""
+    job_url = request.form.get("job_url", "")
+    job = (database_functions.find_by_url(database_functions.read_saved_jobs(), job_url)
+           or io_manager.find_recent_job(job_url))
+    if job is None:
+        return jsonify(error="That job is no longer in your saved jobs or recent searches."), 404
+
+    upload = request.files.get("resume_file")
+    uploaded_name = (secure_filename(upload.filename) or "unnamed") if upload and upload.filename else ""
+    path, problem = io_manager.resume_path_from_form(uploaded_name, request.form.get("resume_choice", ""))
+    if problem:
+        return jsonify(error=problem), 400
+    if uploaded_name:
+        upload.save(path)
+    resume_text, problem = io_manager.load_resume(path)
+    if problem:
+        return jsonify(error=problem), 400
+
+    search_id = io_manager.start_task(job_url=job["job_url"])
+    threading.Thread(target=run_tailor, args=(search_id, resume_text, os.path.basename(path), job),
+                     daemon=True).start()
+    return jsonify(search_id=search_id)
+
+
 @app.get("/progress/<search_id>")
 def progress(search_id):
-    """Progress of one search, for the progress bar."""
+    """Progress of one search or tailoring run, for the progress bar."""
     search = io_manager.get_task(search_id)
     if search is None:
         return jsonify(error="This search is no longer available. Please start a new one."), 404
@@ -278,6 +349,59 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
         logging.error(f"Search failed ({type(error).__name__}: {error})")
         io_manager.update_task(search_id, status="error",
                                error=f"Something went wrong during the search ({type(error).__name__}). "
+                                     "Please try again.")
+
+
+def run_tailor(search_id, resume_text, resume_name, job):
+    """Tailors a resume for one job in a background thread (2. AI layer, 1 AI call).
+
+    Progress bar: 0-25% fetching the job description, 25-90% the AI rewrite, then checks.
+    """
+    try:
+        io_manager.update_task(search_id, percent=5, message="Getting the full job description...")
+        details = ai_manager.fetch_job_details(job["job_url"])
+        # Without the description the AI still has the job's title and skills
+        full_job = {**job, **details} if details else job
+
+        io_manager.update_task(search_id, percent=25,
+                               message="Tailoring your resume with AI (about 20-40 seconds)...")
+        tailored_resume = ai_manager.tailor_resume(resume_text, full_job)
+        if tailored_resume is None:
+            io_manager.update_task(search_id, status="error",
+                                   error="The AI could not tailor your resume. Check your internet connection "
+                                         "and API key, or wait a minute if the AI service is busy.")
+            return
+
+        # 3. Logic layer: which of the job's key skills the resume shows, before and after
+        io_manager.update_task(search_id, percent=92, message="Checking the result...")
+        resume = tailored_resume["resume"]
+        required = job.get("required_skills", [])
+        # Skills the job wants that the resume doesn't show: never added, so the user can decide
+        not_added = {skill.lower(): skill
+                     for skill in [*job.get("missing_skills", []), *tailored_resume["removed_skills"]]}
+
+        result = {
+            "job": job,
+            "resume_name": resume_name,
+            "resume": resume,
+            "changes": resume.pop("changes"),
+            "not_added": list(not_added.values()),
+            "notes": tailored_resume["notes"],
+            "had_description": details is not None,
+            "is_open": details["is_open"] if details else True,
+            "required": required,
+            "covered_before": logic_manager.keywords_found(required, resume_text),
+            "covered_after": logic_manager.keywords_found(required, logic_manager.resume_as_text(resume)),
+        }
+        io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
+
+    except InterruptedError:  # cancelled (io_manager.update_task)
+        return
+
+    except Exception as error:
+        logging.error(f"Tailoring failed ({type(error).__name__}: {error})")
+        io_manager.update_task(search_id, status="error",
+                               error=f"Something went wrong while tailoring ({type(error).__name__}). "
                                      "Please try again.")
 
 
