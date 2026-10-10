@@ -1,6 +1,8 @@
 import io
 import os
 import re
+import threading
+import uuid
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
@@ -518,3 +520,45 @@ def run_search(process_function, record):
         display_error(problem)
         if not prompt_yes_no("Try again?"):
             return None, []
+
+
+# Progress of the web interface's background tasks (a search, or tailoring a resume), by id:
+# {"status": "running" | "done" | "error" | "cancelled", "percent", "message", "result", "error"}
+# (tailoring tasks also have "job_url"). The browser asks for this every second to draw the progress bar.
+# Kept in memory only (lost on restart); the jobs themselves are saved by the data layer.
+# Background threads update it, so every change goes through the lock.
+tasks = {}
+tasks_lock = threading.Lock()
+
+
+def start_task(**extra):
+    """Add a running task and return its id. extra: e.g. job_url for tailoring."""
+    task_id = uuid.uuid4().hex
+    with tasks_lock:
+        tasks[task_id] = {"status": "running", "percent": 0, "message": "Starting...",
+                          "result": None, "error": None, **extra}
+    return task_id
+
+
+def update_task(task_id, **changes):
+    """Update a task's progress. Raises InterruptedError (built into Python) if the user
+    cancelled it, so the background thread stops at its next update."""
+    with tasks_lock:
+        if tasks[task_id]["status"] == "cancelled":
+            raise InterruptedError("cancelled by the user")
+        tasks[task_id].update(changes)
+
+
+def get_task(task_id):
+    """A copy of one task, or None if there is no task with that id."""
+    with tasks_lock:
+        task = tasks.get(task_id)
+        return dict(task) if task is not None else None
+
+
+def cancel_task(task_id):
+    """Mark a running task as cancelled; its thread stops at its next update_task."""
+    with tasks_lock:
+        task = tasks.get(task_id)
+        if task is not None and task["status"] == "running":
+            task["status"] = "cancelled"
