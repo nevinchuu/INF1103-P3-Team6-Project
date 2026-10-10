@@ -361,6 +361,7 @@ details.optional .grid { margin-top: 14px; }
   border: 1px solid var(--border);
 }
 .tag-good { background: var(--good-soft); color: var(--good); border-color: transparent; }
+.tag-via { font-weight: 400; opacity: 0.8; }
 .plain-list { margin: 0; padding-left: 18px; color: var(--muted); font-size: 0.9rem; }
 .plain-list li + li { margin-top: 2px; }
 

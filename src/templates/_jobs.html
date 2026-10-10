@@ -1,5 +1,6 @@
 {# Shared job list, used by results.html and saved.html:
-   {% from "_jobs.html" import job_list %} ... {{ job_list(jobs) }} #}
+   {% from "_jobs.html" import job_list %} ... {{ job_list(jobs) }}
+   Facts the portal doesn't give ("Not specified") are left out. #}
 
 {% macro job_list(jobs) %}
 <ol class="job-list">
@@ -11,8 +12,8 @@
       <summary>
         <span class="job-rank">{{ loop.index }}</span>
         <span class="job-main">
-          <span class="job-title">{{ job.title }}</span>
-          <span class="job-company">{{ job.company }} · {{ job.location }}</span>
+          <span class="job-title">{{ job.title | tidy_title }}</span>
+          <span class="job-company">{{ job.company }} · <span title="{{ job.location }}">{{ job.location | short_location }}</span></span>
         </span>
         <span class="job-side">
           <span class="job-salary">{{ format_salary(job) }}</span>
@@ -30,17 +31,20 @@
         <p class="job-reason">{{ job.suitability_reason }}</p>
 
         <dl class="facts">
-          <div><dt>Job type</dt><dd>{{ join_list(job.employment_types) }}</dd></div>
-          <div><dt>Work arrangement</dt><dd>{{ job.work_arrangement }}</dd></div>
-          <div><dt>Experience</dt><dd>{{ job.min_years_experience }}+ years</dd></div>
-          <div><dt>Education</dt><dd>{{ job.min_education }}</dd></div>
+          {% if job.employment_types %}<div><dt>Job type</dt><dd>{{ join_list(job.employment_types) }}</dd></div>{% endif %}
+          {% if job.work_arrangement and job.work_arrangement != "Not specified" %}<div><dt>Work arrangement</dt><dd>{{ job.work_arrangement }}</dd></div>{% endif %}
+          <div><dt>Experience</dt><dd>{{ job.min_years_experience | experience_text }}</dd></div>
+          {% if job.min_education and job.min_education != "Not specified" %}<div><dt>Education</dt><dd>{{ job.min_education }}</dd></div>{% endif %}
         </dl>
 
         <div class="skill-groups">
           <div>
             <h4>Skills you have</h4>
             <ul class="tags">
-              {% for skill in job.matched_skills %}<li class="tag tag-good">{{ skill.job_skill }}</li>
+              {# A match under another name shows which of your skills covers it #}
+              {% for skill in job.matched_skills %}
+              {% if skill.job_skill is same_skill(skill.candidate_skill) %}<li class="tag tag-good">{{ skill.job_skill }}</li>
+              {% else %}<li class="tag tag-good" title="Matched by your skill: {{ skill.candidate_skill }}">{{ skill.job_skill }} <span class="tag-via">← your {{ skill.candidate_skill }}</span></li>{% endif %}
               {% else %}<li class="muted small">None of the required skills</li>{% endfor %}
             </ul>
           </div>

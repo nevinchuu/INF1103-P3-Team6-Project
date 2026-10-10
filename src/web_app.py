@@ -29,8 +29,12 @@ TOP_N = 5  # jobs kept and saved per search
 app = Flask(__name__)  # templates/ and static/ are found next to this file
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # largest resume upload: 5 MB (app.js checks it too)
 
-# io_manager's text helpers, so templates show salaries and lists the same way as the console
+# io_manager's text helpers, so templates show jobs the same way as the console
 app.jinja_env.globals.update(format_salary=io_manager.format_salary, join_list=io_manager.join_list)
+app.add_template_filter(io_manager.tidy_title, "tidy_title")
+app.add_template_filter(io_manager.short_location, "short_location")
+app.add_template_filter(io_manager.experience_text, "experience_text")
+app.add_template_test(io_manager.same_skill, "same_skill")  # {% if job_skill is same_skill(candidate_skill) %}
 
 
 # ==========================================
