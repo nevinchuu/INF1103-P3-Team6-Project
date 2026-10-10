@@ -355,6 +355,15 @@ details.optional .grid { margin-top: 14px; }
 .gap-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
 .gap-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
+/* ---------- Adjust filters (results page) ---------- */
+.refine { padding: 20px; }
+.refine-head { margin-bottom: 14px; }
+.refine-head p { margin-top: 2px; }
+.refine-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 14px; }
+.refine-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.btn-ghost:is(a):hover { background: var(--surface-2); color: var(--text); }
+.saved-note { margin: -4px 0 12px; }
+
 /* ---------- Tags ---------- */
 .tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .tag {

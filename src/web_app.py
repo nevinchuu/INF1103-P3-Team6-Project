@@ -7,6 +7,8 @@ Run from the project root, then open http://127.0.0.1:5000
 A search runs in a background thread so the page can show a progress bar:
 the browser starts it with POST /search, then asks GET /progress/<search_id>
 every second until it is done and opens /results/<search_id>.
+The results page can change the filters afterwards (?min_salary=...&show=10):
+that only re-ranks the jobs the search already checked, with no new AI calls.
 
 To add a page: add a route below and a template in src/templates/ that
 starts with {% extends "base.html" %}.
@@ -24,8 +26,9 @@ import database_functions
 import io_manager
 import logic_manager
 
-TOP_N = 5  # jobs kept and saved per search
+TOP_N = 5  # jobs shown and saved per search, until the user picks another number
 JOBS_PER_SEARCH = 10  # listings fetched per job title; more means more AI batches (slower, costs more)
+SHOW_OPTIONS = [5, 10, 20]  # "Show" choices on the results page
 
 app = Flask(__name__)  # templates/ and static/ are found next to this file
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # largest resume upload: 5 MB (app.js checks it too)
@@ -60,7 +63,8 @@ def index():
 
 @app.get("/results/<search_id>")
 def results(search_id):
-    """The profile and top jobs from one finished search."""
+    """The profile and top jobs from one finished search. Filters in the address
+    re-rank the jobs the search already checked (3. logic layer only, no AI)."""
     search = io_manager.get_task(search_id)
     if search is None:
         abort(404)
@@ -68,9 +72,46 @@ def results(search_id):
         return redirect(url_for("index", search=search_id))  # the search page picks up its progress
     if search["status"] != "done":
         return redirect(url_for("index"))
+
     result = search["result"]
-    return render_template("results.html", **result, jobs_per_search=JOBS_PER_SEARCH,
-                           skill_gaps=logic_manager.find_skill_gaps(result["jobs"]))
+    filters, show, problem = result["filters"], TOP_N, ""
+    if request.args:
+        new_filters, problem = io_manager.check_filters(request.args)
+        if not problem:
+            filters = new_filters
+            show = request.args.get("show", TOP_N, type=int)
+            show = show if show in SHOW_OPTIONS else TOP_N
+
+    if filters == result["filters"] and show == TOP_N:
+        ranked = result["ranked"]  # the search's own results, saved when it finished
+    else:
+        # 3. Logic layer, then 4. data layer: newly shown jobs are saved too (a failed save still shows them)
+        ranked = {"jobs": logic_manager.filter_and_rank(result["profile"], result["all_jobs"], filters, show),
+                  "removed": logic_manager.count_removed(result["all_jobs"], filters),
+                  "save_failed": False, "newly_saved": 0}
+        try:
+            ranked["newly_saved"] = database_functions.save_new_jobs(ranked["jobs"], result["resume"])
+        except Exception as error:
+            logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
+            ranked["save_failed"] = True
+
+    return render_template(
+        "results.html",
+        search_id=search_id,
+        profile=result["profile"],
+        **ranked,
+        checked=len(result["all_jobs"]),
+        jobs_per_search=JOBS_PER_SEARCH,
+        skill_gaps=logic_manager.find_skill_gaps(ranked["jobs"]),
+        filters=filters,
+        filter_problem=problem,
+        show=show,
+        show_options=SHOW_OPTIONS,
+        job_types=io_manager.JOB_TYPES,
+        work_arrangements=io_manager.WORK_ARRANGEMENTS,
+        max_salary=io_manager.MAX_SALARY,
+        max_years=io_manager.MAX_EXPERIENCE_YEARS,
+    )
 
 
 @app.get("/saved")
@@ -189,22 +230,20 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
                                          "found. Check your API key, or wait a minute if the AI service is busy.")
             return
 
-        # 3. Logic layer
-        io_manager.update_task(search_id, percent=92, message="Ranking jobs...")
-        top_jobs = logic_manager.filter_and_rank(profile, jobs, filters, TOP_N)
-        removed = logic_manager.count_removed(jobs, filters)
-
-        # 4. Data layer (a failed save still shows the results)
-        io_manager.update_task(search_id, percent=96, message="Saving results...")
-        save_failed = False
+        # 3. Logic layer and 4. data layer (a failed save still shows the results)
+        io_manager.update_task(search_id, percent=94, message="Ranking and saving your matches...")
+        ranked = {"jobs": logic_manager.filter_and_rank(profile, jobs, filters, TOP_N),
+                  "removed": logic_manager.count_removed(jobs, filters),
+                  "save_failed": False, "newly_saved": 0}
         try:
-            database_functions.save_new_jobs(top_jobs, resume_name)
+            ranked["newly_saved"] = database_functions.save_new_jobs(ranked["jobs"], resume_name)
         except Exception as error:
             logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
-            save_failed = True
+            ranked["save_failed"] = True
 
-        result = {"profile": profile, "jobs": top_jobs, "checked": len(jobs),
-                  "removed": removed, "save_failed": save_failed}
+        # all_jobs and filters let the results page re-rank without searching again
+        result = {"profile": profile, "all_jobs": jobs, "filters": filters,
+                  "resume": resume_name, "ranked": ranked}
         io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
 
     except InterruptedError:  # cancelled (io_manager.update_task)

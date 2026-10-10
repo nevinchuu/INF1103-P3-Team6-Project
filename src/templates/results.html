@@ -20,6 +20,9 @@
   <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
 </div>
 
+{% if filter_problem %}
+<p class="alert alert-error" role="alert">{{ filter_problem }} Showing your search's original filters.</p>
+{% endif %}
 {% if save_failed %}
 <p class="alert alert-error" role="alert">Your results could not be saved, but they are shown below.</p>
 {% endif %}
@@ -67,12 +70,66 @@
 {% endif %}
 
 <h2 class="section-title">Top matches</h2>
+
+{# Changing these re-ranks the jobs this search already checked; no new AI search (web_app.results) #}
+<form class="card refine" method="get" action="{{ url_for('results', search_id=search_id) }}">
+  <div class="refine-head">
+    <h3>Adjust filters</h3>
+    <p class="muted small">Updates instantly from the {{ checked }} jobs already checked. No new search needed.</p>
+  </div>
+  <div class="refine-grid">
+    <div class="field">
+      <label for="min_salary">Min salary</label>
+      <input id="min_salary" name="min_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="0" inputmode="numeric"
+             value="{{ filters.min_salary or '' }}">
+    </div>
+    <div class="field">
+      <label for="max_salary">Max salary</label>
+      <input id="max_salary" name="max_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="Any" inputmode="numeric"
+             value="{{ filters.max_salary if filters.max_salary != max_salary else '' }}">
+    </div>
+    <div class="field">
+      <label for="job_type">Job type</label>
+      <select id="job_type" name="job_type">
+        {% for option in job_types %}<option {% if option == filters.job_type %}selected{% endif %}>{{ option }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="work_arrangement">Arrangement</label>
+      <select id="work_arrangement" name="work_arrangement">
+        {% for option in work_arrangements %}<option {% if option == filters.work_arrangement %}selected{% endif %}>{{ option }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="max_years_experience">Max years required</label>
+      <input id="max_years_experience" name="max_years_experience" type="number" min="0" max="{{ max_years }}" placeholder="Any" inputmode="numeric"
+             value="{{ filters.max_years_experience if filters.max_years_experience != max_years else '' }}">
+    </div>
+    <div class="field">
+      <label for="show">Show</label>
+      <select id="show" name="show">
+        {% for option in show_options %}<option value="{{ option }}" {% if option == show %}selected{% endif %}>Top {{ option }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="refine-actions">
+    {% if request.args %}<a class="btn btn-ghost" href="{{ url_for('results', search_id=search_id) }}">Reset</a>{% endif %}
+    <button class="btn btn-primary" type="submit">Update matches</button>
+  </div>
+</form>
+
 {% if jobs %}
+  {% if newly_saved %}<p class="muted small saved-note">{{ newly_saved }} new job{{ 's' if newly_saved != 1 }} added to <a href="{{ url_for('saved') }}">Saved jobs</a>.</p>{% endif %}
   {{ job_list(jobs) }}
 {% else %}
   <div class="empty card">
     <h3>No jobs matched</h3>
-    <p class="muted">Try a new search with wider filters.</p>
+    {% if removed %}
+    {% set strictest = removed | dictsort(by="value") | last %}
+    <p class="muted">Your {{ strictest[0] }} filter removed the most jobs ({{ strictest[1] }} of {{ checked }}). Try loosening it above.</p>
+    {% else %}
+    <p class="muted">Try a new search with a different resume.</p>
+    {% endif %}
   </div>
 {% endif %}
 {% endblock %}
