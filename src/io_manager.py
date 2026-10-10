@@ -394,6 +394,13 @@ def short_location(location):
     return place or location
 
 
+def experience_text(years):
+    """A job's minimum experience as text, e.g. 0 -> "No experience needed", 2 -> "2+ years"."""
+    if not years:
+        return "No experience needed"
+    return f"{years}+ year{'s' if years != 1 else ''}"
+
+
 def display_profile(profile):
     """Show what the AI found in the resume."""
     display_header("YOUR PROFILE")
