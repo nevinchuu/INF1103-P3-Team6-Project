@@ -3,6 +3,7 @@ import os
 import re
 import threading
 import uuid
+from copy import deepcopy
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
@@ -14,6 +15,9 @@ ALLOWED_EXTENSIONS = [".pdf", ".docx"]
 MIN_RESUME_CHARS = 100
 MIN_WORDS_TO_EDIT = 12  # a plain Word paragraph this long is body text (e.g. a profile), not a name or contact line
 TYPED_BULLET = re.compile(r"^\s*[•\-–*·]\s+")  # a bullet typed as a character, e.g. "• Built dashboards"
+DURATION = re.compile(r"\s*\(\s*\d+(?:\.\d+)?\s*(?:months?|mths?|mos?|years?|yrs?)\s*\)", re.IGNORECASE)  # " (6 months)"
+YEAR_AT_END = re.compile(r"^(.*?\S)\s*(?:,|\(|–|-)\s*((?:19|20)\d{2})\)?\s*$")  # "Google Certificate, 2023"
+DATED_LIST_HEADING = re.compile(r"certif|licen|award|honou?r|achievement|course", re.IGNORECASE)
 AVERAGE_CHAR_WIDTH = 0.45  # average character width as a share of the font size (Calibri, Arial and similar)
 BULLET_INDENT_PT = 36  # usual indent of a bulleted list when the file doesn't say (0.5 inch)
 MAX_SALARY = 50000
@@ -302,12 +306,56 @@ def font_size_pt(paragraph, default=11):
     return default
 
 
-def write_edited_docx(path, edits):
+def find_layout_fixes(paragraphs, edits):
+    """Small layout clean-ups for a Word resume (from read_docx_paragraphs), skipping paragraphs in edits:
+      - a length of time after dates is dropped: "Sep 2024 - Feb 2025 (6 months)" -> "Sep 2024 - Feb 2025"
+      - a certification, award or course written as "Name, 2024" becomes a line like the resume's other
+        entries, with the name on the left and the year on the right
+    Returns ({paragraph id: new text, with a tab before the dates}, notes on what was tidied)."""
+    fixes, durations, dated = {}, 0, 0
+    has_entries = any(paragraph["kind"] == "entry" for paragraph in paragraphs)
+    heading = ""
+    for paragraph in paragraphs:
+        if paragraph["id"] in edits:
+            continue
+        if paragraph["kind"] == "heading":
+            heading = paragraph["text"]
+        elif paragraph["kind"] == "entry" and DURATION.search(paragraph["text"]):
+            fixes[paragraph["id"]] = DURATION.sub("", paragraph["text"])
+            durations += 1
+        elif paragraph["kind"] == "bullet" and has_entries and DATED_LIST_HEADING.search(heading):
+            match = YEAR_AT_END.match(paragraph["text"])
+            if match:
+                fixes[paragraph["id"]] = f"{match.group(1)}\t{match.group(2)}"
+                dated += 1
+    notes = []
+    if durations:
+        notes.append("Tidied the layout: removed the length of time after the dates, e.g. \"(6 months)\".")
+    if dated:
+        notes.append(f"Tidied the layout: put the year of {dated} certification(s) or award(s) on the right, "
+                     f"like your other entries.")
+    return fixes, notes
+
+
+def write_edited_docx(path, edits, fixes=None):
     """Return a copy of a Word resume with some paragraphs reworded, as the bytes of a Word file.
     edits: {paragraph id: new text} from ai_manager.tailor_docx, where "" removes that bullet.
+    fixes: {paragraph id: new text} from find_layout_fixes.
     Everything else (fonts, colours, spacing, order) stays exactly as it was."""
     document = Document(path)
     paragraphs = document.paragraphs
+    # An existing title-and-dates line, whose look a dated certification copies
+    template = next((paragraph for paragraph in paragraphs if "\t" in paragraph.text), None)
+
+    for position, new_text in (fixes or {}).items():
+        paragraph = paragraphs[position]
+        if "\t" in paragraph.text:
+            # A title-and-dates line: drop the length of time, keeping each run's formatting
+            for run in paragraph.runs:
+                run.text = DURATION.sub("", run.text)
+        elif template is not None:
+            make_entry_line(paragraph, template, *new_text.split("\t", 1))
+
     for position, new_text in edits.items():
         paragraph = paragraphs[position]
         if new_text == "":
@@ -323,6 +371,38 @@ def write_edited_docx(path, edits):
     output = io.BytesIO()
     document.save(output)
     return output.getvalue()
+
+
+def tidy_resume_dates(resume):
+    """Drop a length of time after the dates in a tailored resume (ai_manager.tailor_resume),
+    e.g. "Sep 2024 - Feb 2025 (6 months)" -> "Sep 2024 - Feb 2025". Returns the same resume."""
+    for section in resume["sections"]:
+        for entry in section["entries"]:
+            entry["dates"] = DURATION.sub("", entry["dates"])
+    return resume
+
+
+def make_entry_line(paragraph, template, name, year):
+    """Turn a bullet like "Google Certificate, 2023" into a line that looks like template (a title-and-dates
+    line): no bullet, the same tab stop, the name formatted like the title and the year like the dates.
+    The paragraph keeps its own spacing, so the resume doesn't get longer."""
+    space_before = paragraph.paragraph_format.space_before
+    space_after = paragraph.paragraph_format.space_after
+    element = paragraph._p
+    if element.pPr is not None:
+        element.remove(element.pPr)  # drops the bullet style and numbering
+    if template._p.pPr is not None:
+        element.insert(0, deepcopy(template._p.pPr))
+    paragraph.paragraph_format.space_before = space_before
+    paragraph.paragraph_format.space_after = space_after
+
+    for run in paragraph.runs:
+        element.remove(run._r)
+    template_runs = [run for run in template.runs if run.text]
+    for source, text in ((template_runs[0], name), (template_runs[-1], f"\t{year}")):
+        run = paragraph.add_run(text)
+        if source._r.rPr is not None:
+            run._r.insert(0, deepcopy(source._r.rPr))
 
 
 def list_resumes():

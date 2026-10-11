@@ -395,18 +395,21 @@ def run_tailor(search_id, resume_text, resume_path, job):
                      for skill in [*job.get("missing_skills", []), *tailored_resume["removed_skills"]]}
 
         if is_docx:
-            # The preview: every paragraph with its new wording, marked if changed or removed
+            # The preview: every paragraph with its new wording, marked if changed or removed, and
+            # with the layout fixes (e.g. a certification's year moved to the right) applied
             edits = tailored_resume["edits"]
-            preview = [{**paragraph, "text": edits.get(paragraph["id"]) or paragraph["text"],
+            fixes, fix_notes = io_manager.find_layout_fixes(paragraphs, edits)
+            preview = [{**paragraph, "text": edits.get(paragraph["id"]) or fixes.get(paragraph["id"], paragraph["text"]),
+                        "kind": "entry" if paragraph["id"] in fixes else paragraph["kind"],
                         "changed": paragraph["id"] in edits, "removed": edits.get(paragraph["id"]) == ""}
                        for paragraph in paragraphs]
             resume = None
-            changes = tailored_resume["changes"]
+            changes = tailored_resume["changes"] + fix_notes
             tailored_text = "\n".join(paragraph["text"] for paragraph in preview if not paragraph["removed"])
-            docx_bytes = io_manager.write_edited_docx(resume_path, edits)
+            docx_bytes = io_manager.write_edited_docx(resume_path, edits, fixes)
         else:
             preview = None
-            resume = tailored_resume["resume"]
+            resume = io_manager.tidy_resume_dates(tailored_resume["resume"])
             changes = resume.pop("changes")
             tailored_text = logic_manager.resume_as_text(resume)
             docx_bytes = io_manager.write_resume_docx(resume)
