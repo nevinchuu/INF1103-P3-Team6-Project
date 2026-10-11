@@ -23,7 +23,9 @@ HOW THEY FLOW
       e.g. required skills, min education, which of your skills match, a reason
 
 Separately, tailor_resume(resume_text, job) rewrites a resume for one job (1 AI call),
-and fetch_job_details(job_url) gets that job's full description from the portal.
+tailor_docx(paragraphs, resume_text, job) does it for a Word file by rewording its paragraphs
+in place (so the file keeps its layout), and fetch_job_details(job_url) gets that job's full
+description from the portal.
 
 EVERY AI CALL GOES THROUGH THE SAME FOUR STEPS (run_task)
 ---------------------------------------------------------
@@ -296,15 +298,41 @@ TAILORED_RESUME_SCHEMA = {
     "additionalProperties": False,
 }
 
+# New wording for some paragraphs of a Word resume (tailor_docx). Only the wording changes:
+# the file keeps its own layout. Checked against the original afterwards (_ground_docx_edits).
+DOCX_EDITS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "edits": {
+            "type": "array",
+            "description": "Only the paragraphs that were changed",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "paragraph": {"type": "integer", "description": "The [number] of the paragraph"},
+                    "text": {"type": "string", "description": "Its new wording. Empty string to remove a bullet."},
+                },
+                "required": ["paragraph", "text"],
+                "additionalProperties": False,
+            },
+        },
+        "changes": {**STRING_LIST, "description": "3-6 short notes on what was changed for this job and why"},
+    },
+    "required": ["edits", "changes"],
+    "additionalProperties": False,
+}
+
 # The kinds of AI call this module makes, and the schema each one uses
 TASKS = {
     "candidate_profile": CANDIDATE_SCHEMA,
     "job_requirements": JOB_BATCH_SCHEMA,
     "tailored_resume": TAILORED_RESUME_SCHEMA,
+    "docx_edits": DOCX_EDITS_SCHEMA,
 }
 
 # Range checks applied by validate_response (inclusive)
-NUMERIC_RANGES = {"years_of_experience": (0, 60), "internship_months": (0, 240), "job_index": (0, 999)}
+NUMERIC_RANGES = {"years_of_experience": (0, 60), "internship_months": (0, 240), "job_index": (0, 999),
+                  "paragraph": (0, 9999)}
 NON_EMPTY_LISTS = {"search_keywords"}  # we can't search for jobs without at least one keyword
 
 
@@ -320,6 +348,7 @@ def build_prompt(record: dict, task: str) -> str:
     candidate_profile: record = {"resume_text": str}
     job_requirements:  record = {"jobs": list[dict], "candidate": dict (candidate record)}
     tailored_resume:   record = {"resume_text": str, "job": dict (job record, with description if known)}
+    docx_edits:        record = {"paragraphs": list[dict] (io_manager.read_docx_paragraphs), "job": dict}
     """
     if task == "candidate_profile":
         # f"""...""" is a multi-line f-string: {...} parts are replaced with values
@@ -424,6 +453,47 @@ RULES:
   You may shorten or drop bullets that do not help with this job.
 - changes: 3-6 short notes on what you changed and why,
   e.g. "Moved SQL to the top of Skills because the job asks for it".
+
+Return JSON only."""
+
+    if task == "docx_edits":
+        job = record["job"]
+        # Paragraphs that may be reworded get a [number]; the rest are shown only so the AI has context
+        lines = []
+        for paragraph in record["paragraphs"]:
+            if paragraph["editable"]:
+                lines.append(f"[{paragraph['id']}] ({paragraph['kind']}) {paragraph['text']}")
+            else:
+                lines.append(f"    {paragraph['text']}")
+        resume_lines = "\n".join(lines)
+        return f"""Tailor this candidate's resume to the job below by rewording some of its paragraphs.
+The resume's layout, headings, section order, titles, dates and skills lists stay exactly as they are:
+you can only change the paragraphs marked with a [number].
+
+JOB:
+Title: {job.get('title')}
+Company: {job.get('company')}
+Key skills: {', '.join(job.get('required_skills', [])) or 'Not known'}
+Listed skills: {', '.join(job.get('listed_skills', [])) or 'None'}
+Description: {job.get('description') or 'Not available'}
+
+RESUME (one paragraph per line; only [numbered] ones can be changed):
+{resume_lines}
+
+RULES:
+- Use ONLY facts in the resume. Never add a skill, tool, employer, job title, qualification, date,
+  number or achievement that is not in the resume, even if the job asks for it.
+- edits: only the paragraphs you change, each with its [number] and its new wording.
+  Leave out paragraphs that are already a good fit. Paragraphs cannot be moved or added.
+- Keep each changed paragraph about as long as the original, so it still fits the layout.
+- (text) paragraphs such as a profile: aim them at this job, using only facts from the resume.
+- (bullet) paragraphs: start with an action verb, put what matters for this job first, use the job's
+  key skill words only where the resume shows that skill, and keep any numbers exactly.
+  Do not reword certification, course or award names.
+  To remove a bullet that does not help with this job, give it an empty text, but never remove
+  every bullet under a heading.
+- changes: 3-6 short notes on what you changed and why,
+  e.g. "Reworded the profile to lead with SQL because the job asks for it".
 
 Return JSON only."""
 
@@ -982,6 +1052,17 @@ def _normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _numbers_in(text: str) -> set[str]:
+    """Every whole number, without commas: "2,000 users, 15%" -> {"2000", "15"}."""
+    return {number.replace(",", "") for number in re.findall(r"\d+(?:[.,]\d+)*", text)}
+
+
+def _appears_in(text: str, source: str) -> bool:
+    """True if text is in source (already _normalise'd) as whole words:
+    "SQL" is found in "SQL, Excel", but "Java" is not found in "JavaScript"."""
+    return re.search(rf"(?<!\w){re.escape(_normalise(text))}(?!\w)", source) is not None
+
+
 def _ground_tailored_resume(tailored: dict, resume_text: str) -> tuple[dict, list[str], list[str]]:
     """The anti-hallucination check for tailor_resume: removes anything the original resume
     doesn't contain. Returns (resume, skills removed, notes about other removals).
@@ -993,19 +1074,14 @@ def _ground_tailored_resume(tailored: dict, resume_text: str) -> tuple[dict, lis
     Known limit: a real number reused for a different claim still passes, e.g. "2 dashboards"
     when the resume only says "2-week sprint".
     """
-    def numbers_in(text: str) -> set[str]:
-        # Every whole number, without commas: "2,000 users, 15%" -> {"2000", "15"}
-        return {number.replace(",", "") for number in re.findall(r"\d+(?:[.,]\d+)*", text)}
-
     source = _normalise(resume_text)
-    source_numbers = numbers_in(source)
+    source_numbers = _numbers_in(source)
 
     def found(text: str) -> bool:
-        # Whole words only: "SQL" is found in "SQL, Excel", but "Java" is not found in "JavaScript"
-        return re.search(rf"(?<!\w){re.escape(_normalise(text))}(?!\w)", source) is not None
+        return _appears_in(text, source)
 
     def numbers_found(text: str) -> bool:
-        return numbers_in(text) <= source_numbers  # <= on sets: every number is in the resume
+        return _numbers_in(text) <= source_numbers  # <= on sets: every number is in the resume
 
     notes = []
     if tailored["name"] and not found(tailored["name"]):
@@ -1050,3 +1126,62 @@ def tailor_resume(resume_text: str, job: dict) -> dict | None:
         return None
     resume, removed_skills, notes = _ground_tailored_resume(result, resume_text)
     return {"resume": resume, "removed_skills": removed_skills, "notes": notes}
+
+
+def _ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: str,
+                       job: dict) -> tuple[dict, list[str], list[str]]:
+    """The anti-hallucination check for tailor_docx: keeps only rewrites that add nothing new.
+    Returns ({paragraph id: new text}, skills removed, notes about rewrites that were not used).
+
+    A rewrite is used only if its paragraph may be edited, every number in it is in the resume,
+    and every job skill it mentions is in the resume. "" (remove) is only allowed for bullets.
+    """
+    source = _normalise(resume_text)
+    source_numbers = _numbers_in(source)
+    editable = {paragraph["id"]: paragraph for paragraph in paragraphs if paragraph["editable"]}
+    job_skills = list(dict.fromkeys([*job.get("required_skills", []), *job.get("listed_skills", [])]))
+
+    kept, removed_skills, notes = {}, [], []
+    for edit in edits:
+        paragraph = editable.get(edit["paragraph"])
+        if paragraph is None or edit["paragraph"] in kept or edit["text"] == paragraph["text"]:
+            continue  # not a paragraph that may change, already changed, or unchanged
+        start = f'"{paragraph["text"][:50]}..."'
+        if edit["text"] == "":
+            if paragraph["kind"] == "bullet":
+                kept[edit["paragraph"]] = ""
+            continue
+        if not _numbers_in(edit["text"]) <= source_numbers:
+            notes.append(f"Kept {start} as it was: the new wording had a number that isn't in your resume.")
+            continue
+        new_text = _normalise(edit["text"])
+        added = [skill for skill in job_skills if _appears_in(skill, new_text) and not _appears_in(skill, source)]
+        if added:
+            removed_skills += added
+            notes.append(f"Kept {start} as it was: the new wording added {', '.join(added)}, "
+                         f"which isn't in your resume.")
+            continue
+        kept[edit["paragraph"]] = edit["text"]
+    return kept, list(dict.fromkeys(removed_skills)), notes
+
+
+def tailor_docx(paragraphs: list[dict], resume_text: str, job: dict) -> dict | None:
+    """Tailors a Word resume in place (1 AI call): rewords some paragraphs and keeps the rest,
+    so the file keeps its own layout. paragraphs come from io_manager.read_docx_paragraphs, and
+    job is a job record, ideally with "description" from fetch_job_details.
+    Returns {"edits": {paragraph id: new text, "" removes that bullet}, "changes", "removed_skills",
+    "notes"}, or None. io_manager.write_edited_docx applies the edits to a copy of the file."""
+    # Like _capped_resume: stop adding paragraphs once MAX_RESUME_CHARS is reached
+    capped, length = [], 0
+    for paragraph in paragraphs:
+        length += len(paragraph["text"]) + 1
+        if length > MAX_RESUME_CHARS:
+            logging.warning(f"Resume has more than {MAX_RESUME_CHARS} characters; using the paragraphs before that.")
+            break
+        capped.append(paragraph)
+
+    result = run_task({"paragraphs": capped, "job": job}, "docx_edits")
+    if result is None:
+        return None
+    edits, removed_skills, notes = _ground_docx_edits(result["edits"], capped, resume_text, job)
+    return {"edits": edits, "changes": result["changes"], "removed_skills": removed_skills, "notes": notes}
