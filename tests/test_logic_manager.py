@@ -141,7 +141,17 @@ def test_job_above_candidate_level_ranks_lower():
     assert logic_manager.seniority_gap(make_job(), "Executive") == 0
 
 
-# 7. Jobs that match none of the candidate's skills are not shown
+# 7. More matched skills ranks first, even when a job with a short skill list has a higher share
+def test_more_matched_skills_beats_a_higher_share():
+    jobs = [
+        make_job(title="2 of 3", required_skills=["Python", "SQL", "Excel"], matched_skills=matched("Python", "SQL")),
+        make_job(title="3 of 6", required_skills=["Python", "SQL", "Excel", "Tableau", "R", "Git"],
+                 matched_skills=matched("Python", "SQL", "Excel")),
+    ]
+    assert [job["title"] for job in logic_manager.filter_and_rank(PROFILE, jobs, NO_FILTERS, top_n=2)] == ["3 of 6", "2 of 3"]
+
+
+# 8. Jobs that match none of the candidate's skills are not shown
 def test_jobs_with_no_matched_skills_are_hidden():
     jobs = [make_job(title="Match", matched_skills=matched("Python")), make_job(title="No match")]
     assert [job["title"] for job in logic_manager.filter_and_rank(PROFILE, jobs, NO_FILTERS, top_n=5)] == ["Match"]
