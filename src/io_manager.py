@@ -14,6 +14,8 @@ ALLOWED_EXTENSIONS = [".pdf", ".docx"]
 MIN_RESUME_CHARS = 100
 MIN_WORDS_TO_EDIT = 12  # a plain Word paragraph this long is body text (e.g. a profile), not a name or contact line
 TYPED_BULLET = re.compile(r"^\s*[•\-–*·]\s+")  # a bullet typed as a character, e.g. "• Built dashboards"
+AVERAGE_CHAR_WIDTH = 0.45  # average character width as a share of the font size (Calibri, Arial and similar)
+BULLET_INDENT_PT = 36  # usual indent of a bulleted list when the file doesn't say (0.5 inch)
 MAX_SALARY = 50000
 MAX_EXPERIENCE_YEARS = 60
 LINE_WIDTH = 78
@@ -236,8 +238,13 @@ def read_docx_paragraphs(path):
                 "bullet" or "text"
       centered: True if centred, e.g. a contact line
       editable: True for bullets and long plain paragraphs (e.g. a profile). Lines with mixed formatting,
-                a tab or a link are never edited, so their layout stays exactly as it is."""
+                a tab or a link are never edited, so their layout stays exactly as it is.
+      chars_per_line: about how many characters fit on one of its lines, from the page width,
+                its indent and its font size (ai_manager uses it to keep the number of pages)
+    path can also be a file-like object, e.g. io.BytesIO."""
     document = Document(path)
+    section = document.sections[0]
+    page_text_width = (section.page_width - section.left_margin - section.right_margin) / 12700  # EMU -> points
     paragraphs = []
     for position, paragraph in enumerate(document.paragraphs):
         text = paragraph.text
@@ -263,14 +270,36 @@ def read_docx_paragraphs(path):
         editable = (only_runs and len(formats) == 1 and kind in ("bullet", "text")
                     and (kind == "bullet" or len(text.split()) >= MIN_WORDS_TO_EDIT))
 
+        # Line width: the page's text width minus the paragraph's indents (a list's indent is usually
+        # not in the paragraph itself, so a bullet without one gets BULLET_INDENT_PT)
+        indent = paragraph.paragraph_format.left_indent or paragraph.style.paragraph_format.left_indent
+        indent_pt = indent.pt if indent is not None else (BULLET_INDENT_PT if is_bullet else 0)
+        right_indent = paragraph.paragraph_format.right_indent
+        width_pt = page_text_width - indent_pt - (right_indent.pt if right_indent is not None else 0)
+        chars_per_line = max(20, int(width_pt / (font_size_pt(paragraph) * AVERAGE_CHAR_WIDTH)))
+
         paragraphs.append({
             "id": position,
             "text": TYPED_BULLET.sub("", text).strip(),
             "kind": kind,
             "centered": paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER,
             "editable": editable,
+            "chars_per_line": chars_per_line,
         })
     return paragraphs
+
+
+def font_size_pt(paragraph, default=11):
+    """A Word paragraph's font size in points: its first run's, else its style's (or a style it is based on)."""
+    for run in paragraph.runs:
+        if run.font.size is not None:
+            return run.font.size.pt
+    style = paragraph.style
+    while style is not None:
+        if style.font.size is not None:
+            return style.font.size.pt
+        style = style.base_style
+    return default
 
 
 def write_edited_docx(path, edits):

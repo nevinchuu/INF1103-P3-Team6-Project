@@ -467,6 +467,10 @@ RULES:
   number or achievement that is not in the resume, even if the job asks for it. Leave gaps out.
 - Keep the resume's own layout: the same sections, in the same order, with the same headings
   (e.g. keep "PROFILE"; do not rename it "Summary"). Do not add, merge, split or move sections.
+- Keep it the same length: the resume has about {len(record["resume_text"].split())} words, and the tailored one
+  must not have more, so it fits on the same number of pages.
+- Write job keywords in normal sentence case inside a sentence, e.g. "collaborating with stakeholders",
+  not "Collaboration With Stakeholders".
 - name and contact: copied exactly from the resume, including the contact line's separators
   (e.g. "Singapore | +65 9000 0000 | name@example.com"). Empty string if the resume has none.
 - kind "text" sections (e.g. a profile or summary): rewrite the paragraph to aim at this job,
@@ -490,7 +494,8 @@ Return JSON only."""
         lines = []
         for paragraph in record["paragraphs"]:
             if paragraph["editable"]:
-                lines.append(f"[{paragraph['id']}] ({paragraph['kind']}) {paragraph['text']}")
+                words = len(paragraph["text"].split())
+                lines.append(f"[{paragraph['id']}] ({paragraph['kind']}, {words} words) {paragraph['text']}")
             else:
                 lines.append(f"    {paragraph['text']}")
         resume_lines = "\n".join(lines)
@@ -518,7 +523,10 @@ RULES:
 - Never add a number, duration or count (e.g. "2 years of experience") that is not in the resume.
 - edits: only the paragraphs you change, each with its [number] and its new wording.
   Leave out paragraphs that are already a good fit. Paragraphs cannot be moved or added.
-- Keep each changed paragraph about as long as the original, so it still fits the layout.
+- Keep the resume the same length: use at most the number of words shown for each paragraph, and
+  fewer if you can. A longer resume can spill onto another page.
+- Write job keywords in normal sentence case inside a sentence, e.g. "collaborating with stakeholders",
+  not "Collaboration With Stakeholders".
 - (text) paragraphs such as a profile: aim them at this job, using only facts from the resume.
 - (bullet) paragraphs: start with an action verb, put what matters for this job first, describe the work
   with the job's words from the first keyword list where they fit, and keep any numbers exactly.
@@ -1195,7 +1203,8 @@ def _ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: s
     Returns ({paragraph id: new text}, skills removed, notes about rewrites that were not used).
 
     A rewrite is used only if its paragraph may be edited, every number in it is in the resume,
-    and it uses none of the job keywords the resume doesn't show (_job_keywords). "" (remove) is
+    it uses none of the job keywords the resume doesn't show (_job_keywords), and the resume still
+    has no more lines than before, so it keeps its number of pages. "" (remove) is
     only allowed for bullets, and never for every bullet in a group (e.g. all the points under one job).
     """
     source = _normalise(resume_text)
@@ -1242,6 +1251,31 @@ def _ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: s
             for paragraph_id in ids:
                 del kept[paragraph_id]
             notes.append(f'Kept every point under "{above}": removing them all would leave it empty.')
+
+    # Number of pages: the file keeps its fonts and layout, so it keeps its pages if it has no more
+    # lines than before. A rewrite that needs extra lines may use the lines freed by removed or
+    # shortened paragraphs. Estimates lean the safe way: originals are counted with lines a little
+    # wider than chars_per_line (so fewer lines are freed), new wording a little narrower (more lines).
+    def lines(text: str, paragraph: dict, width: float) -> int:
+        return -(-len(text) // max(1, int(paragraph["chars_per_line"] * width)))  # rounds up
+
+    spare, longer = 0, []
+    for paragraph_id, text in kept.items():
+        paragraph = editable[paragraph_id]
+        if len(text) <= len(paragraph["text"]):
+            # Same font and width, so no longer means no more lines; count what it surely frees
+            spare += max(0, lines(paragraph["text"], paragraph, 1.15) - lines(text, paragraph, 0.9))
+        else:
+            longer.append(paragraph_id)
+    for paragraph_id in longer:
+        paragraph = editable[paragraph_id]
+        extra = max(0, lines(kept[paragraph_id], paragraph, 0.9) - lines(paragraph["text"], paragraph, 1.15))
+        if extra <= spare:
+            spare -= extra
+        else:
+            del kept[paragraph_id]
+            notes.append(f'Kept "{paragraph["text"][:50]}..." as it was: the new wording was longer and '
+                         f"could push your resume onto another page.")
     return kept, list(dict.fromkeys(removed_skills)), notes
 
 
