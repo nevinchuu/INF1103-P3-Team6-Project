@@ -620,6 +620,10 @@ def _openai_request(client: openai.OpenAI, prompt: str, response_format: dict) -
     # **params unpacks the dict into keyword arguments: model=..., messages=..., ...
     completion = client.chat.completions.create(**params)
 
+    if not completion.choices:
+        # e.g. Gemini can send no choices at all when it blocks a reply
+        logging.error(f"Response from {PROVIDER} ({MODEL}) had no answer in it.")
+        return None
     choice = completion.choices[0]
     if choice.finish_reason == "length":
         logging.error(f"Response from {PROVIDER} ({MODEL}) was cut off at its length limit.")
@@ -687,6 +691,13 @@ def _with_retries(request, task: str):
             # 400 often means "I don't support this request format" - let call_api try the next one
             logging.warning(f"[{task}] Request rejected (HTTP 400: {_short(e)}); trying fallback if any.")
             return _FORMAT_REJECTED
+        except Exception as e:
+            # Anything unexpected (e.g. a reply in an odd shape) fails this call only, like any other
+            # failed call, so the caller can offer to try again. The traceback goes to the log at INFO
+            # level, which main.py writes to its log file but not to the terminal.
+            logging.error(f"[{task}] Unexpected error calling the AI API ({type(e).__name__}: {e}).")
+            logging.info(f"[{task}] Traceback of the unexpected error:", exc_info=True)
+            return None
     return None
 
 
