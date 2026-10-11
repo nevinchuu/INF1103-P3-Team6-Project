@@ -81,8 +81,7 @@ def index():
 
 @app.get("/results/<search_id>")
 def results(search_id):
-    """The profile and top jobs from one finished search. Filters in the address
-    re-rank the jobs the search already checked (3. logic layer only, no AI)."""
+    """The profile and top jobs from one finished search."""
     search = io_manager.get_task(search_id)
     if search is None:
         abort(404)
@@ -90,41 +89,23 @@ def results(search_id):
         return redirect(url_for("index", search=search_id))  # the search page picks up its progress
     if search["status"] != "done":
         return redirect(url_for("index"))
+    return render_results(search_id, search["result"])
 
-    result = search["result"]
-    filters, show, problem = result["filters"], result.get("show", TOP_N), ""
-    if request.args:
-        new_filters, problem = io_manager.check_filters(request.args)
-        if not problem:
-            filters = new_filters
-            show = request.args.get("show", TOP_N, type=int)
-            show = show if show in SHOW_OPTIONS else TOP_N
 
-    if filters == result["filters"] and show == result.get("show", TOP_N):
-        ranked = result["ranked"]  # the search's own results, saved when it finished
-    else:
-        # 3. Logic layer, then 4. data layer: newly shown jobs are saved too (a failed save still shows them)
-        ranked = {"jobs": logic_manager.filter_and_rank(result["profile"], result["all_jobs"], filters, show),
-                  "removed": logic_manager.count_removed(result["all_jobs"], filters),
-                  "save_failed": False, "newly_saved": 0}
-        try:
-            ranked["newly_saved"] = database_functions.save_new_jobs(ranked["jobs"], result["resume"])
-        except Exception as error:
-            logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
-            ranked["save_failed"] = True
-
+def render_results(search_id, result, problem=""):
+    """The results page for one finished search. problem: why the filters sent to
+    "Update matches" weren't used (io_manager.check_filters), shown above the results."""
     return render_template(
         "results.html",
         search_id=search_id,
         profile=result["profile"],
-        **ranked,
+        **result["ranked"],
         checked=len(result["all_jobs"]),
         step_message=result.get("step_message", ""),
-        jobs_per_search=JOBS_PER_SEARCH,
-        skill_gaps=logic_manager.find_skill_gaps(ranked["jobs"]),
-        filters=filters,
+        skill_gaps=logic_manager.find_skill_gaps(result["ranked"]["jobs"]),
+        filters=result["filters"],
         filter_problem=problem,
-        show=show,
+        show=result.get("show", TOP_N),
         show_options=SHOW_OPTIONS,
         job_types=io_manager.JOB_TYPES,
         work_arrangements=io_manager.WORK_ARRANGEMENTS,
@@ -258,8 +239,7 @@ def update_search(search_id):
         abort(404)
     filters, problem = io_manager.check_filters(request.form)
     if problem:
-        # The results page shows the problem for filters in its address
-        return redirect(url_for("results", search_id=search_id, **request.form))
+        return render_results(search_id, search["result"], problem)
     show = request.form.get("show", TOP_N, type=int)
     show = show if show in SHOW_OPTIONS else TOP_N
 
@@ -385,7 +365,7 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
             logging.error(f"Could not save jobs ({type(error).__name__}: {error})")
             ranked["save_failed"] = True
 
-        # all_jobs and filters let the results page re-rank without searching again
+        # all_jobs lets the tailor page find a job from this search (io_manager.find_recent_job)
         result = {"profile": profile, "all_jobs": jobs, "filters": filters,
                   "resume": resume_name, "ranked": ranked, "step_message": step_message, "show": show}
         io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
