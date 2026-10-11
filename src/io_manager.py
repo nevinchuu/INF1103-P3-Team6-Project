@@ -550,6 +550,15 @@ def search_step_message(step, filters):
     return ""
 
 
+def hidden_jobs_message(count):
+    """What to tell the user about jobs hidden because none of their skills matched (logic_manager.count_unmatched)."""
+    if count == 0:
+        return ""
+    if count == 1:
+        return "1 job hidden because none of your skills matched it."
+    return f"{count} jobs hidden because none of your skills matched them."
+
+
 def collect_input(ai_name="an AI service"):
     """Collect the resume and filters for one search. ai_name is shown in the privacy notice."""
     display_header("NEW SEARCH")

@@ -141,6 +141,20 @@ def test_job_above_candidate_level_ranks_lower():
     assert logic_manager.seniority_gap(make_job(), "Executive") == 0
 
 
+# 7. Jobs that match none of the candidate's skills are hidden, and counted so the user can be told
+def test_jobs_with_no_matched_skills_are_hidden():
+    jobs = [
+        make_job(title="Match", matched_skills=matched("Python")),
+        make_job(title="No match"),
+        make_job(title="No match, filtered out", employment_types=["Contract"]),
+    ]
+    filters = {**NO_FILTERS, "job_type": "Full Time"}
+    assert [job["title"] for job in logic_manager.filter_and_rank(PROFILE, jobs, filters, top_n=5)] == ["Match"]
+    # Only jobs that pass the filters count as hidden; the filtered-out one is counted by count_removed
+    assert logic_manager.count_unmatched(jobs, filters) == 1
+    assert logic_manager.count_unmatched(jobs[:1], filters) == 0
+
+
 def run_all_tests():
     """Runs every test_* function in this file. Returns how many failed."""
     tests = [function for name, function in globals().items() if name.startswith("test_") and callable(function)]

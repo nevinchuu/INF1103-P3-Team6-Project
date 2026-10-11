@@ -122,13 +122,20 @@ def select_top_jobs(profile, jobs, top_n):
 
 
 # Logic layer entry point, called by main.py: removes jobs with a bad link or that
-# fail the user's filters, then returns the top_n best matches
+# fail the user's filters, and jobs that match none of the candidate's skills,
+# then returns the top_n best matches
 def filter_and_rank(profile, jobs, filters, top_n=5):
     kept = []
     for job in jobs:
-        if passes_filters(job, filters):
+        if passes_filters(job, filters) and job.get("matched_skills"):
             kept.append(job)
     return select_top_jobs(profile, kept, top_n)
+
+
+# Counts the jobs that pass the user's filters but match none of the candidate's skills,
+# which filter_and_rank hides, so the user can be told how many
+def count_unmatched(jobs, filters):
+    return sum(1 for job in jobs if passes_filters(job, filters) and not job.get("matched_skills"))
 
 
 # The skills missing from the most jobs, as [(skill, number of jobs)], most common first.
