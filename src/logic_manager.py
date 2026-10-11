@@ -12,6 +12,10 @@ SENIORITY_LEVELS = [
     "Professional", "Manager", "Middle Management", "Senior Management",
 ]
 ANY = "Any"  # the filter value meaning "no preference" (from io_manager)
+# A job this many levels or more above the candidate's ranks below jobs nearer their level,
+# e.g. "Senior Executive" and up for a "Fresh/entry level" candidate. Smaller gaps only break ties,
+# because the level order is rough
+FAR_ABOVE_LEVELS = 3
 SKILL_GAP_LIMIT = 5  # most common missing skills returned by find_skill_gaps
 
 # Checks the link format only, without going online, so it is instant and
@@ -94,9 +98,9 @@ def seniority_gap(job, candidate_seniority):
 
 
 # Returns the top_n jobs that best suit the candidate (moved from ai_manager_test.py).
-# Jobs whose experience or education requirement the candidate misses rank below
-# those they meet; within each group, jobs are ordered by number of required skills
-# matched, then by share of them matched, then by how far the job's level is above
+# Jobs whose experience or education requirement the candidate misses, or that are far above
+# their level, rank below the others; within each group, jobs are ordered by number of required
+# skills matched, then by share of them matched, then by how far the job's level is above
 # the candidate's.
 def select_top_jobs(profile, jobs, top_n):
     candidate_level = EDUCATION_LEVELS.index(profile["highest_qualification"])
@@ -104,11 +108,12 @@ def select_top_jobs(profile, jobs, top_n):
     # sorted() compares the returned tuples item by item, smallest first:
     #   1. experience_gap   - 0 years short beats 2 years short
     #   2. not education_ok - False (meets it) sorts before True (doesn't)
-    #   3. -matched         - negative so MORE matched skills sort FIRST. The count comes before the
+    #   3. far_above        - False (near your level) sorts before True (FAR_ABOVE_LEVELS or more above)
+    #   4. -matched         - negative so MORE matched skills sort FIRST. The count comes before the
     #                         share because jobs list different numbers of skills: 3 of 6 matched
     #                         beats 2 of 3, though 2 of 3 is the higher share
-    #   4. -match_ratio     - tie-breaker: a higher share of the job's skills first
-    #   5. level_gap        - tie-breaker: a job at your level beats one 2 levels above
+    #   5. -match_ratio     - tie-breaker: a higher share of the job's skills first
+    #   6. level_gap        - tie-breaker: a job at your level beats one 2 levels above
     def sort_key(job):
         experience_gap = max(0, job["min_years_experience"] - profile["years_of_experience"])
         education_ok = (
@@ -118,7 +123,7 @@ def select_top_jobs(profile, jobs, top_n):
         matched = len(job["matched_skills"])
         match_ratio = matched / len(job["required_skills"]) if job["required_skills"] else 0
         level_gap = seniority_gap(job, profile.get("seniority_level"))
-        return (experience_gap, not education_ok, -matched, -match_ratio, level_gap)
+        return (experience_gap, not education_ok, level_gap >= FAR_ABOVE_LEVELS, -matched, -match_ratio, level_gap)
 
     return sorted(jobs, key=sort_key)[:top_n]
 

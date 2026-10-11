@@ -102,7 +102,7 @@ def test_count_removed_groups_jobs_by_first_failed_filter():
     assert logic_manager.count_removed([make_job()], filters) == {}
 
 
-# 5. Ranking: jobs the candidate qualifies for come first, then by share of skills matched
+# 5. Ranking: jobs the candidate qualifies for come first, then by number of skills matched
 def test_filter_and_rank_orders_best_matches_first():
     jobs = [
         make_job(title="Too senior", min_years_experience=5,
@@ -123,7 +123,8 @@ def test_filter_and_rank_orders_best_matches_first():
     assert [job["title"] for job in top_two] == ["Best match", "Half match"]
 
 
-# 6. Seniority: with the same skill match, a job at the candidate's level beats one above it
+# 6. Seniority: a job far above the candidate's level (FAR_ABOVE_LEVELS or more) ranks below jobs
+#    nearer it, even with more skills matched; a smaller gap only breaks ties
 def test_job_above_candidate_level_ranks_lower():
     profile = {**PROFILE, "seniority_level": "Fresh/entry level"}
     jobs = [
@@ -132,10 +133,13 @@ def test_job_above_candidate_level_ranks_lower():
                  matched_skills=matched("Python", "SQL")),
         make_job(title="Better match, senior", position_levels=["Manager"],
                  matched_skills=matched("Python", "SQL", "Excel")),
+        make_job(title="Better match, junior", position_levels=["Junior Executive"],
+                 matched_skills=matched("Python", "SQL", "Excel")),
     ]
-    ranked = logic_manager.filter_and_rank(profile, jobs, NO_FILTERS, top_n=3)
-    # Skill match still comes first; seniority only breaks the tie between the 2-of-4 jobs
-    assert [job["title"] for job in ranked] == ["Better match, senior", "Entry role", "Senior role"]
+    ranked = logic_manager.filter_and_rank(profile, jobs, NO_FILTERS, top_n=4)
+    # Junior Executive is 2 levels up: near enough, so its extra skill puts it first.
+    # Senior Executive and Manager are 4+ levels up, so they come after both nearer jobs
+    assert [job["title"] for job in ranked] == ["Better match, junior", "Entry role", "Better match, senior", "Senior role"]
     # Unknown or missing levels count as no gap
     assert logic_manager.seniority_gap(make_job(position_levels=["Unknown"]), "Executive") == 0
     assert logic_manager.seniority_gap(make_job(), "Executive") == 0
