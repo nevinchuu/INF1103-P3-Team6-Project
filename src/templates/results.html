@@ -7,15 +7,8 @@
 <div class="page-head page-head-row">
   <div>
     <h1>Your matches</h1>
-    {# Where the jobs came from and what the logic layer did, e.g. "Checked 26 listings: up to 10 from each of
-       3 MyCareersFuture searches (Data Analyst, ...) · 22 removed by your filters (14 salary, 8 job type)" #}
-    <p class="lead">
-      Checked {{ checked }} listings: up to {{ jobs_per_search }} from each of {{ profile.search_keywords | length }}
-      MyCareersFuture searches ({{ profile.search_keywords | join(", ") }})
-      {%- if removed %} · {{ removed.values() | sum }} removed by your filters
-        ({% for reason, count in removed.items() %}{{ count }} {{ reason }}{% if not loop.last %}, {% endif %}{% endfor %})
-      {%- endif %} · showing the best {{ jobs | length }}
-    </p>
+    {# The job titles searched on MyCareersFuture, e.g. "Searched MyCareersFuture for: Data Analyst, Business Analyst" #}
+    <p class="lead">Searched MyCareersFuture for: {{ profile.search_keywords | join(", ") }}</p>
   </div>
   <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
 </div>
