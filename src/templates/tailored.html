@@ -27,18 +27,22 @@
 
 {% if required %}
 <section class="card">
-  <h2>Job keywords in your resume</h2>
-  <p class="muted small">Key skills for this job that appear word for word in your resume. Treat this as a guide, not a target:
-    only add a skill if your experience really shows it.</p>
+  <h2>Skills matched for this job</h2>
+  <p class="muted small">The skills your job card matched, and where the tailored resume shows each one.</p>
   <div class="coverage">
-    <div><span class="coverage-num">{{ covered_before | length }}/{{ required | length }}</span><span class="muted small">before</span></div>
+    <div><span class="coverage-num">{{ matched | length }}/{{ required | length }}</span><span class="muted small">job card</span></div>
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" class="muted"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
-    <div><span class="coverage-num coverage-after">{{ covered_after | length }}/{{ required | length }}</span><span class="muted small">after</span></div>
+    <div><span class="coverage-num coverage-after">{{ shown | length }}/{{ required | length }}</span><span class="muted small">tailored resume</span></div>
   </div>
-  <ul class="tags">
-    {% for skill in required %}
-    {% if skill in covered_after %}<li class="tag tag-good">{{ skill }}</li>{% else %}<li class="tag">{{ skill }}</li>{% endif %}
-    {% endfor %}
+  <ul class="plain-list skill-evidence">
+    {% for match in matched %}
+    <li>
+      <span class="tag{% if match.job_skill in shown %} tag-good{% endif %}">{{ match.job_skill }}{% if match.job_skill is not same_skill(match.candidate_skill) %}
+        <span class="tag-via">← your {{ match.candidate_skill }}</span>{% endif %}</span>
+      {% if match.job_skill in shown %}<span class="muted small">“{{ shown[match.job_skill] }}”</span>
+      {% else %}<span class="muted small">Not clearly shown. Check the preview and add it back if it was left out.</span>{% endif %}
+    </li>
+    {% else %}<li class="muted small">None of this job's key skills matched your resume.</li>{% endfor %}
   </ul>
 </section>
 {% endif %}

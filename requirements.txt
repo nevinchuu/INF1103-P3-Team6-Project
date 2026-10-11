@@ -17,9 +17,6 @@ anthropic==1.11.0
 # Job Portal API (MyCareersFuture)
 requests==2.34.2
 
-# Data Manipulation & Validation
-pandas==2.3.3
-
 # Environment Variable Management
 python-dotenv==1.2.4
 

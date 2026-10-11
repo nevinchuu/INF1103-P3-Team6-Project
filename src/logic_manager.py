@@ -146,15 +146,33 @@ def find_skill_gaps(jobs):
     return [(names[key], count) for key, count in counts.most_common(SKILL_GAP_LIMIT) if count >= 2]
 
 
-# The skills that appear word for word in text, ignoring case,
-# e.g. "SQL" is found in "Wrote SQL reports" but "Java" is not found in "JavaScript"
-def keywords_found(skills, text):
-    text = text.lower()
-    return [skill for skill in skills if re.search(rf"(?<!\w){re.escape(skill.lower())}(?!\w)", text)]
+# Lowercase, one kind of dash and quote, single spaces, so a quote still matches across a line break
+def normalise_text(text):
+    text = re.sub(r"[‐-―−]", "-", text.lower())
+    text = re.sub(r"[‘’]", "'", re.sub(r"[“”]", '"', text))
+    return re.sub(r"\s+", " ", text).strip()
 
 
-# All the words of a tailored resume (ai_manager.tailor_resume) as one text, for keywords_found
-def resume_as_text(resume):
+# The job card's matched skills that the tailored resume still shows, as {job skill: quote}.
+# A quote from ai_manager (tailor_resume or tailor_docx) counts only if the skill is on the card and
+# the quote is really in one of parts (the tailored resume's pieces of text) as whole words,
+# e.g. "SQL" is not found inside "NoSQL"
+def skills_shown(matched_skills, skill_evidence, parts):
+    card_skills = {match["job_skill"].lower(): match["job_skill"] for match in matched_skills}
+    parts = [normalise_text(part) for part in parts]
+    shown = {}
+    for item in skill_evidence:
+        job_skill = card_skills.get(item["job_skill"].lower())
+        quote = normalise_text(item["evidence"]).rstrip(".,;:")  # a full stop the AI added doesn't count
+        # Within one part, so a quote can't join the end of one bullet to the start of the next
+        if job_skill and quote and any(re.search(rf"(?<!\w){re.escape(quote)}(?!\w)", part) for part in parts):
+            shown.setdefault(job_skill, item["evidence"])
+    return shown
+
+
+# Each piece of text in a tailored resume (ai_manager.tailor_resume): text sections, skills,
+# and each entry's title, organisation, subtitle and bullets
+def resume_parts(resume):
     parts = []
     for section in resume["sections"]:
         parts.append(section["text"])
@@ -162,4 +180,4 @@ def resume_as_text(resume):
             parts += group["skills"]
         for entry in section["entries"]:
             parts += [entry["title"], entry["organisation"], entry["subtitle"], *entry["bullets"]]
-    return "\n".join(parts)
+    return parts

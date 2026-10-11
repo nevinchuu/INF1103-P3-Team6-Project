@@ -306,6 +306,22 @@ RESUME_SECTION_SCHEMA = {
     "additionalProperties": False,
 }
 
+# For each of the job card's matched skills, where the tailored resume shows it (both tailoring calls).
+# Checked afterwards (logic_manager.skills_shown): each quote must really be in the tailored resume
+SKILL_EVIDENCE_SCHEMA = {
+    "type": "array",
+    "description": "For each MATCHED SKILL, the phrase in this tailored resume that shows it",
+    "items": {
+        "type": "object",
+        "properties": {
+            "job_skill": {"type": "string", "description": "Copied exactly from MATCHED SKILLS"},
+            "evidence": {"type": "string", "description": "Copied exactly from this tailored resume"},
+        },
+        "required": ["job_skill", "evidence"],
+        "additionalProperties": False,
+    },
+}
+
 # A resume rewritten for one job (tailor_resume), keeping the resume's own sections, order and
 # headings. Checked against the original resume afterwards (_ground_tailored_resume), so
 # nothing the candidate didn't write gets through.
@@ -317,8 +333,9 @@ TAILORED_RESUME_SCHEMA = {
         "sections": {"type": "array", "items": RESUME_SECTION_SCHEMA,
                      "description": "Every section of the resume, in the resume's own order"},
         "changes": {**STRING_LIST, "description": "3-6 short notes on what was changed for this job and why"},
+        "skill_evidence": SKILL_EVIDENCE_SCHEMA,
     },
-    "required": ["name", "contact", "sections", "changes"],
+    "required": ["name", "contact", "sections", "changes", "skill_evidence"],
     "additionalProperties": False,
 }
 
@@ -342,8 +359,9 @@ DOCX_EDITS_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "skill_evidence": SKILL_EVIDENCE_SCHEMA,
     },
-    "required": ["edits"],
+    "required": ["edits", "skill_evidence"],
     "additionalProperties": False,
 }
 
@@ -451,6 +469,9 @@ Return JSON only."""
 
     if task == "tailored_resume":
         job = record["job"]
+        # The skills the job card counted as matched, so the tailored resume keeps the same count
+        matched_skills = "\n".join(f'- {match["job_skill"]} (the candidate\'s "{match["candidate_skill"]}")'
+                                   for match in job.get("matched_skills", [])) or "None"
         return f"""Rewrite this candidate's resume so it is tailored to the job below.
 
 JOB:
@@ -459,6 +480,9 @@ Company: {job.get('company')}
 Key skills: {', '.join(job.get('required_skills', [])) or 'Not known'}
 Listed skills: {', '.join(job.get('listed_skills', [])) or 'None'}
 Description: {job.get('description') or 'Not available'}
+
+MATCHED SKILLS (job skills the candidate already has, and the resume skill that shows each):
+{matched_skills}
 
 RESUME:
 {record["resume_text"]}
@@ -486,11 +510,18 @@ RULES:
   You may shorten or drop bullets that do not help with this job.
 - changes: 3-6 short notes on what you changed and why,
   e.g. "Moved SQL to the front of the Technical skills because the job asks for it".
+- Keep every MATCHED SKILL visible in the tailored resume (in a skills group, a text section or a bullet).
+- skill_evidence: one item per MATCHED SKILL. job_skill is copied exactly from MATCHED SKILLS.
+  evidence is a short phrase (2-12 words) copied exactly, character for character, from your
+  tailored resume (a skill name, or part of a text section or a bullet) that shows that skill.
+  Do not add items for skills that are not in MATCHED SKILLS. Empty list if there are none.
 
 Return JSON only."""
 
     if task == "docx_edits":
         job = record["job"]
+        matched_skills = "\n".join(f'- {match["job_skill"]} (the candidate\'s "{match["candidate_skill"]}")'
+                                   for match in job.get("matched_skills", [])) or "None"
         # Paragraphs that may be reworded get a [number]; the rest are shown only so the AI has context
         lines = []
         for paragraph in record["paragraphs"]:
@@ -515,6 +546,9 @@ JOB KEYWORDS THE RESUME SHOWS (use these words where they describe what the resu
 JOB KEYWORDS THE RESUME DOES NOT SHOW (never use these words):
 {', '.join(record["avoid_keywords"]) or 'None'}
 
+MATCHED SKILLS (job skills the candidate already has, and the resume skill that shows each):
+{matched_skills}
+
 RESUME (one paragraph per line; only [numbered] ones can be changed):
 {resume_lines}
 
@@ -537,6 +571,11 @@ RULES:
   Most bullets should be kept or reworded, and never remove every bullet under a heading.
 - reason: for each edit, why you made it, in under 15 words,
   e.g. "leads with SQL, which the job asks for" or "not relevant to a data role".
+- Keep every MATCHED SKILL visible: don't remove or reword away the only place that shows one.
+- skill_evidence: one item per MATCHED SKILL. job_skill is copied exactly from MATCHED SKILLS.
+  evidence is a short phrase (2-12 words) copied exactly, character for character, from the resume
+  as it will read after your edits (a paragraph you changed, or one you left as it is) that shows
+  that skill. Do not add items for skills that are not in MATCHED SKILLS. Empty list if there are none.
 
 Return JSON only."""
 
@@ -1186,12 +1225,14 @@ def _ground_tailored_resume(tailored: dict, resume_text: str) -> tuple[dict, lis
 def tailor_resume(resume_text: str, job: dict) -> dict | None:
     """Rewrites a resume for one job (1 AI call), keeping only facts from the original.
     job is a job record, ideally with "description" from fetch_job_details.
-    Returns {"resume": TAILORED_RESUME_SCHEMA record, "removed_skills", "notes"}, or None."""
+    Returns {"resume": TAILORED_RESUME_SCHEMA record, "removed_skills", "notes", "skill_evidence"},
+    or None. skill_evidence is not checked here: logic_manager.skills_shown checks each quote."""
     result = run_task({"resume_text": _capped_resume(resume_text), "job": job}, "tailored_resume")
     if result is None:
         return None
+    skill_evidence = result.pop("skill_evidence")
     resume, removed_skills, notes = _ground_tailored_resume(result, resume_text)
-    return {"resume": resume, "removed_skills": removed_skills, "notes": notes}
+    return {"resume": resume, "removed_skills": removed_skills, "notes": notes, "skill_evidence": skill_evidence}
 
 
 def _job_keywords(job: dict, resume_text: str) -> tuple[list[str], list[str]]:
@@ -1296,7 +1337,8 @@ def tailor_docx(paragraphs: list[dict], resume_text: str, job: dict) -> dict | N
     so the file keeps its own layout. paragraphs come from io_manager.read_docx_paragraphs, and
     job is a job record, ideally with "description" from fetch_job_details.
     Returns {"edits": {paragraph id: new text, "" removes that bullet}, "changes", "removed_skills",
-    "notes"}, or None. io_manager.write_edited_docx applies the edits to a copy of the file."""
+    "notes", "skill_evidence"}, or None. io_manager.write_edited_docx applies the edits to a copy of
+    the file. skill_evidence is not checked here: logic_manager.skills_shown checks each quote."""
     # Like _capped_resume: stop adding paragraphs once MAX_RESUME_CHARS is reached
     capped, length = [], 0
     for paragraph in paragraphs:
@@ -1326,4 +1368,5 @@ def tailor_docx(paragraphs: list[dict], resume_text: str, job: dict) -> dict | N
         start = original[paragraph_id][:50] + ("..." if len(original[paragraph_id]) > 50 else "")
         reason = reasons.get(paragraph_id, "")
         changes.append(f'{what} "{start}"' + (f": {reason}" if reason else ""))
-    return {"edits": edits, "changes": changes, "removed_skills": removed_skills, "notes": notes}
+    return {"edits": edits, "changes": changes, "removed_skills": removed_skills, "notes": notes,
+            "skill_evidence": result["skill_evidence"]}

@@ -9,3 +9,6 @@ data/
 
 # Log file written by main.py (logs/job_matcher.log)
 logs/
+# Resumes hold personal details: keep only the sample in git (uploads from the web app land here too)
+resumes/*
+!resumes/sample_resume_fintech.docx

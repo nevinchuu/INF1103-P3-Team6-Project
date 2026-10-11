@@ -10,16 +10,17 @@ on:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # A fixed Ubuntu version, so CI keeps running on the system it has passed on
+    runs-on: ubuntu-24.04
 
     steps:
       # 1. Check out repository code
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 2. Set up Python (same version as the Docker image)
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
@@ -51,3 +52,8 @@ jobs:
               print(page, status)
               assert status == 200, f'{page} returned {status}'
           "
+
+      # 7. The console app starts and exits cleanly (4 = Exit). Importing main.py alone
+      #    misses a crash at start-up, e.g. calling a function another layer doesn't have yet
+      - name: Start and exit the console app
+        run: printf '4\n' | python src/main.py | grep -q "Goodbye!"

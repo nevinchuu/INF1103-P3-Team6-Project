@@ -10,7 +10,7 @@ threads need: a route for each page, and run_search / run_tailor, the work each 
 
     1. Input/output layer (io_manager)          -> resume files, form checks, display text, progress
     2. AI layer           (ai_manager)          -> candidate profile, job records, tailored resume
-    3. Logic layer        (logic_manager)       -> filtered and ranked jobs, skill gaps, keyword coverage
+    3. Logic layer        (logic_manager)       -> filtered and ranked jobs, skill gaps, skills a tailored resume shows
     4. Data layer         (database_functions)  -> saved jobs
 
 A search runs in a background thread so the page can show a progress bar:
@@ -42,6 +42,11 @@ import logic_manager
 TOP_N = 5  # jobs shown and saved per search, until the user picks another number
 JOBS_PER_SEARCH = 10  # listings fetched per job title; more means more AI batches (slower, costs more)
 SHOW_OPTIONS = [5, 10, 20]  # "Show" choices on the results page
+
+# Network address the server listens on. 127.0.0.1 = this computer only. The Docker image sets
+# WEB_HOST=0.0.0.0, because inside a container 127.0.0.1 can't be reached from outside it
+WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
+WEB_PORT = 5000
 
 app = Flask(__name__)  # templates/ and static/ are found next to this file
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # largest resume upload: 5 MB (app.js checks it too)
@@ -387,9 +392,9 @@ def run_tailor(search_id, resume_text, resume_path, job):
                                          "and API key, or wait a minute if the AI service is busy.")
             return
 
-        # 3. Logic layer: which of the job's key skills the resume shows, before and after
+        # 3. Logic layer: which of the job card's matched skills the tailored resume still shows
         io_manager.update_task(search_id, percent=92, message="Checking the result...")
-        required = job.get("required_skills", [])
+        matched = job.get("matched_skills", [])
         # Skills the job wants that the resume doesn't show: never added, so the user can decide
         not_added = {skill.lower(): skill
                      for skill in [*job.get("missing_skills", []), *tailored_resume["removed_skills"]]}
@@ -405,13 +410,13 @@ def run_tailor(search_id, resume_text, resume_path, job):
                        for paragraph in paragraphs]
             resume = None
             changes = tailored_resume["changes"] + fix_notes
-            tailored_text = "\n".join(paragraph["text"] for paragraph in preview if not paragraph["removed"])
+            tailored_parts = [paragraph["text"] for paragraph in preview if not paragraph["removed"]]
             docx_bytes = io_manager.write_edited_docx(resume_path, edits, fixes)
         else:
             preview = None
             resume = io_manager.tidy_resume_dates(tailored_resume["resume"])
             changes = resume.pop("changes")
-            tailored_text = logic_manager.resume_as_text(resume)
+            tailored_parts = logic_manager.resume_parts(resume)
             docx_bytes = io_manager.write_resume_docx(resume)
 
         result = {
@@ -425,9 +430,9 @@ def run_tailor(search_id, resume_text, resume_path, job):
             "notes": tailored_resume["notes"],
             "had_description": details is not None,
             "is_open": details["is_open"] if details else True,
-            "required": required,
-            "covered_before": logic_manager.keywords_found(required, resume_text),
-            "covered_after": logic_manager.keywords_found(required, tailored_text),
+            "required": job.get("required_skills", []),
+            "matched": matched,
+            "shown": logic_manager.skills_shown(matched, tailored_resume["skill_evidence"], tailored_parts),
         }
         io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
 
@@ -445,6 +450,6 @@ if __name__ == "__main__":
     # ai_manager turns on INFO logging when imported; show only warnings and errors
     logging.getLogger().setLevel(logging.WARNING)
     logging.getLogger("werkzeug").setLevel(logging.WARNING)  # hide a log line for every progress check
-    io_manager.display_message("Resume Job Matcher is running. Open http://127.0.0.1:5000 in your browser "
+    io_manager.display_message(f"Resume Job Matcher is running. Open http://127.0.0.1:{WEB_PORT} in your browser "
                                "(Ctrl+C to stop).")
-    app.run(host="127.0.0.1", port=5000)
+    app.run(host=WEB_HOST, port=WEB_PORT)
