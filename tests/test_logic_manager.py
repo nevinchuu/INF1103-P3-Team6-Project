@@ -161,6 +161,20 @@ def test_jobs_with_no_matched_skills_are_hidden():
     assert [job["title"] for job in logic_manager.filter_and_rank(PROFILE, jobs, NO_FILTERS, top_n=5)] == ["Match"]
 
 
+# 9. A tailored resume shows a matched skill if the AI's quote is really in it, or else if the
+#    candidate's own skill name is; a made-up quote alone doesn't count
+def test_skills_shown_checks_quotes_and_falls_back_to_skill_names():
+    card = [{"job_skill": "Spreadsheets", "candidate_skill": "Microsoft Excel"},
+            {"job_skill": "SQL", "candidate_skill": "SQL"},
+            {"job_skill": "Python", "candidate_skill": "Python"}]
+    parts = ["Technical: Microsoft Excel, SQL", "Wrote SQL queries to reconcile payments"]
+    evidence = [{"job_skill": "SQL", "evidence": "Wrote SQL queries"},
+                {"job_skill": "Spreadsheets", "evidence": "a quote that is not in the resume"},
+                {"job_skill": "Python", "evidence": "Built Python scripts"}]
+    assert logic_manager.skills_shown(card, evidence, parts) == {"SQL": "Wrote SQL queries",
+                                                                  "Spreadsheets": "Microsoft Excel"}
+
+
 def run_all_tests():
     """Runs every test_* function in this file. Returns how many failed."""
     tests = [function for name, function in globals().items() if name.startswith("test_") and callable(function)]

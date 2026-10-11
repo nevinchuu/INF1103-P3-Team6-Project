@@ -164,17 +164,28 @@ def normalise_text(text):
 # The job card's matched skills that the tailored resume still shows, as {job skill: quote}.
 # A quote from ai_manager (tailor_resume or tailor_docx) counts only if the skill is on the card and
 # the quote is really in one of parts (the tailored resume's pieces of text) as whole words,
-# e.g. "SQL" is not found inside "NoSQL"
+# e.g. "SQL" is not found inside "NoSQL". A skill without a quote that checks out still counts if
+# the candidate's skill name, or the job's, is in the tailored resume, e.g. "Microsoft Excel" in
+# a skills line, and that name becomes its quote.
 def skills_shown(matched_skills, skill_evidence, parts):
     card_skills = {match["job_skill"].lower(): match["job_skill"] for match in matched_skills}
     parts = [normalise_text(part) for part in parts]
+
+    # Within one part, so a quote can't join the end of one bullet to the start of the next
+    def in_resume(text):
+        text = normalise_text(text).rstrip(".,;:")  # a full stop the AI added doesn't count
+        return bool(text) and any(re.search(rf"(?<!\w){re.escape(text)}(?!\w)", part) for part in parts)
+
     shown = {}
     for item in skill_evidence:
         job_skill = card_skills.get(item["job_skill"].lower())
-        quote = normalise_text(item["evidence"]).rstrip(".,;:")  # a full stop the AI added doesn't count
-        # Within one part, so a quote can't join the end of one bullet to the start of the next
-        if job_skill and quote and any(re.search(rf"(?<!\w){re.escape(quote)}(?!\w)", part) for part in parts):
+        if job_skill and in_resume(item["evidence"]):
             shown.setdefault(job_skill, item["evidence"])
+    for match in matched_skills:
+        if match["job_skill"] not in shown:
+            name = next((name for name in (match["candidate_skill"], match["job_skill"]) if in_resume(name)), None)
+            if name:
+                shown[match["job_skill"]] = name
     return shown
 
 
