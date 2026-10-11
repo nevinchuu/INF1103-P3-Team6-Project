@@ -167,7 +167,8 @@ def load_resume(path):
 
 def write_resume_docx(resume):
     """Return a tailored resume (ai_manager.tailor_resume) as the bytes of a Word file.
-    A plain one-column layout, which applicant tracking systems read reliably."""
+    A plain one-column layout, which applicant tracking systems read reliably, with the
+    resume's own sections, order and headings."""
     document = Document()
     for section in document.sections:
         section.top_margin = section.bottom_margin = Cm(1.8)
@@ -181,7 +182,7 @@ def write_resume_docx(resume):
         paragraph = document.add_paragraph()
         paragraph.paragraph_format.space_before = Pt(10)
         paragraph.paragraph_format.space_after = Pt(4)
-        run = paragraph.add_run(text.upper())
+        run = paragraph.add_run(text)
         run.bold = True
         run.font.size = Pt(11)
         run.font.color.rgb = RGBColor(0x1F, 0x3A, 0x8A)
@@ -196,15 +197,16 @@ def write_resume_docx(resume):
         paragraph = document.add_paragraph(resume["contact"])
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    if resume["summary"]:
-        heading("Summary")
-        document.add_paragraph(resume["summary"])
-    if resume["skills"]:
-        heading("Skills")
-        document.add_paragraph(" · ".join(resume["skills"]))
-
     for section in resume["sections"]:
         heading(section["heading"])
+        if section["text"]:
+            document.add_paragraph(section["text"])
+        for group in section["skill_groups"]:
+            # "Technical: Python, SQL", with the label in bold
+            paragraph = document.add_paragraph()
+            if group["label"]:
+                paragraph.add_run(f"{group['label']}: ").bold = True
+            paragraph.add_run(", ".join(group["skills"]))
         for entry in section["entries"]:
             # "Title, Organisation" on the left, dates on the right (a right-aligned tab stop)
             paragraph = document.add_paragraph()
@@ -215,6 +217,8 @@ def write_resume_docx(resume):
                 paragraph.add_run(f", {entry['organisation']}")
             if entry["dates"]:
                 paragraph.add_run(f"\t{entry['dates']}").italic = True
+            if entry["subtitle"]:
+                document.add_paragraph().add_run(entry["subtitle"]).italic = True
             for bullet in entry["bullets"]:
                 document.add_paragraph(bullet, style="List Bullet")
 

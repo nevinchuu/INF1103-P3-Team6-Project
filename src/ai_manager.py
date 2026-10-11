@@ -265,36 +265,60 @@ RESUME_ENTRY_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string", "description": "e.g. 'Data Analyst Intern' or 'Diploma in Information Technology'"},
-        "organisation": {"type": "string", "description": "Company, school or group. Empty string if none."},
+        "organisation": {"type": "string",
+                         "description": "Company, school or group, if on the same line as the title. Empty string if not."},
+        "subtitle": {"type": "string",
+                     "description": "The line under the title, as written, e.g. 'Example Polytechnic | GPA 3.6 / 4.0'. "
+                                    "Empty string if none."},
         "dates": {"type": "string", "description": "Copied exactly from the resume. Empty string if none."},
         "bullets": STRING_LIST,
     },
-    "required": ["title", "organisation", "dates", "bullets"],
+    "required": ["title", "organisation", "subtitle", "dates", "bullets"],
     "additionalProperties": False,
 }
 
-# A resume rewritten for one job (tailor_resume). Checked against the original resume
-# afterwards (_ground_tailored_resume), so nothing the candidate didn't write gets through.
+# One group of skills, e.g. "Technical: Python, SQL"
+SKILL_GROUP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "description": "e.g. 'Technical'. Empty string if the skills aren't grouped."},
+        "skills": STRING_LIST,
+    },
+    "required": ["label", "skills"],
+    "additionalProperties": False,
+}
+
+# One section of a resume, in the resume's own order. kind says which of text, skill_groups
+# and entries it uses; the other two are left empty.
+RESUME_SECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "heading": {"type": "string", "description": "Copied exactly from the resume, e.g. 'PROFILE'"},
+        "kind": {"type": "string", "enum": ["text", "skills", "entries"],
+                 "description": "text: a paragraph, e.g. a profile; skills: skill lists; "
+                                "entries: jobs, qualifications, projects and similar"},
+        "text": {"type": "string", "description": "For kind text. Empty string otherwise."},
+        "skill_groups": {"type": "array", "items": SKILL_GROUP_SCHEMA,
+                         "description": "For kind skills. Empty list otherwise."},
+        "entries": {"type": "array", "items": RESUME_ENTRY_SCHEMA, "description": "For kind entries. Empty list otherwise."},
+    },
+    "required": ["heading", "kind", "text", "skill_groups", "entries"],
+    "additionalProperties": False,
+}
+
+# A resume rewritten for one job (tailor_resume), keeping the resume's own sections, order and
+# headings. Checked against the original resume afterwards (_ground_tailored_resume), so
+# nothing the candidate didn't write gets through.
 TAILORED_RESUME_SCHEMA = {
     "type": "object",
     "properties": {
         "name": {"type": "string"},
-        "contact": {"type": "string", "description": "Email, phone and links from the resume, separated by ' · '"},
-        "summary": {"type": "string", "description": "2-3 sentences written for this job"},
-        "skills": {**STRING_LIST, "description": "Skills from the resume, most relevant to the job first"},
-        "sections": {
-            "type": "array",
-            "description": "The resume's sections, e.g. Experience, Education, Projects, most relevant first",
-            "items": {
-                "type": "object",
-                "properties": {"heading": {"type": "string"}, "entries": {"type": "array", "items": RESUME_ENTRY_SCHEMA}},
-                "required": ["heading", "entries"],
-                "additionalProperties": False,
-            },
-        },
+        "contact": {"type": "string", "description": "The contact line, copied exactly with its separators"},
+        "sections": {"type": "array", "items": RESUME_SECTION_SCHEMA,
+                     "description": "Every section of the resume, in the resume's own order"},
         "changes": {**STRING_LIST, "description": "3-6 short notes on what was changed for this job and why"},
     },
-    "required": ["name", "contact", "summary", "skills", "sections", "changes"],
+    "required": ["name", "contact", "sections", "changes"],
     "additionalProperties": False,
 }
 
@@ -440,19 +464,22 @@ RESUME:
 RULES:
 - Use ONLY facts in the resume. Never add a skill, tool, employer, job title, qualification, date,
   number or achievement that is not in the resume, even if the job asks for it. Leave gaps out.
-- name and contact: copied exactly from the resume (contact: email, phone, links, separated by " · ").
-  Empty string if the resume has none.
-- summary: 2-3 sentences aimed at this job, using only facts from the resume. No numbers that are not in it.
-- skills: skill names copied exactly as written in the resume, most relevant to this job first.
-  Only if there are more than 15, leave out the ones that do not help with this job.
-- sections: the resume's sections (e.g. Experience, Education, Projects, Certifications, Leadership),
-  most relevant to this job first. Keep every job and qualification.
-  For each entry, copy title, organisation and dates exactly as written in the resume.
+- Keep the resume's own layout: the same sections, in the same order, with the same headings
+  (e.g. keep "PROFILE"; do not rename it "Summary"). Do not add, merge, split or move sections.
+- name and contact: copied exactly from the resume, including the contact line's separators
+  (e.g. "Singapore | +65 9000 0000 | name@example.com"). Empty string if the resume has none.
+- kind "text" sections (e.g. a profile or summary): rewrite the paragraph to aim at this job,
+  about as long as the original, using only facts from the resume. No numbers that are not in it.
+- kind "skills" sections: keep the resume's own groups and labels (e.g. "Technical"), in the same order.
+  Copy skill names exactly as written; within each group, put the most relevant to this job first.
+  Only if there are more than 15 skills in total, leave out ones that do not help with this job.
+- kind "entries" sections (e.g. experience, education, projects, certifications): keep every entry,
+  in the resume's order. Copy title, organisation, subtitle and dates exactly as written.
   bullets: rewrite to show what matters for this job: start with an action verb, put the most relevant
   first, use the job's key skill words only where the resume shows that skill, and keep any numbers exactly.
   You may shorten or drop bullets that do not help with this job.
 - changes: 3-6 short notes on what you changed and why,
-  e.g. "Moved SQL to the top of Skills because the job asks for it".
+  e.g. "Moved SQL to the front of the Technical skills because the job asks for it".
 
 Return JSON only."""
 
@@ -1067,10 +1094,11 @@ def _ground_tailored_resume(tailored: dict, resume_text: str) -> tuple[dict, lis
     """The anti-hallucination check for tailor_resume: removes anything the original resume
     doesn't contain. Returns (resume, skills removed, notes about other removals).
 
-    Name, contact details, skills, organisations and dates must appear in the resume text
-    as whole words (so a skill "C" is not "found" inside "Excel").
-    The summary and bullets may be reworded, but every number in them (e.g. "30%", "2,000")
-    must be a whole number in the resume (so "15" is not "found" inside a phone number).
+    Name, contact details, skills, skill group labels, organisations, subtitles and dates must
+    appear in the resume text as whole words (so a skill "C" is not "found" inside "Excel").
+    Text sections (e.g. a profile) and bullets may be reworded, but every number in them
+    (e.g. "30%", "2,000") must be a whole number in the resume (so "15" is not "found" inside
+    a phone number). A section left with nothing in it is dropped.
     Known limit: a real number reused for a different claim still passes, e.g. "2 dashboards"
     when the resume only says "2-week sprint".
     """
@@ -1086,23 +1114,33 @@ def _ground_tailored_resume(tailored: dict, resume_text: str) -> tuple[dict, lis
     notes = []
     if tailored["name"] and not found(tailored["name"]):
         tailored["name"] = ""
-    contact_parts = re.split(r"\s*[·|•]\s*", tailored["contact"])
-    tailored["contact"] = " · ".join(part for part in contact_parts if part and found(part))
+    # Keep the resume's own separator, e.g. "Singapore | +65 9000 0000" stays with " | "
+    pieces = re.split(r"(\s*[·|•]\s*)", tailored["contact"])
+    separator = pieces[1] if len(pieces) > 1 else " · "
+    tailored["contact"] = separator.join(part for part in pieces[0::2] if part.strip() and found(part))
 
-    removed_skills = [skill for skill in tailored["skills"] if not found(skill)]
-    tailored["skills"] = [skill for skill in tailored["skills"] if found(skill)]
-
-    if not numbers_found(tailored["summary"]):
-        notes.append("The summary was left out because it had a number that isn't in your resume.")
-        tailored["summary"] = ""
-
+    removed_skills = []
     for section in tailored["sections"]:
+        if section["kind"] == "text" and not numbers_found(section["text"]):
+            notes.append(f'The "{section["heading"]}" section was left out because it had a number '
+                         f"that isn't in your resume.")
+            section["text"] = ""
+
+        for group in section["skill_groups"]:
+            if group["label"] and not found(group["label"]):
+                group["label"] = ""
+            removed_skills += [skill for skill in group["skills"] if not found(skill)]
+            group["skills"] = [skill for skill in group["skills"] if found(skill)]
+        section["skill_groups"] = [group for group in section["skill_groups"] if group["skills"]]
+
         kept = []
         for entry in section["entries"]:
             where = entry["organisation"] or entry["title"]
             if not where or not found(where):
                 notes.append(f'Left out "{entry["title"] or entry["organisation"]}": it isn\'t in your resume.')
                 continue
+            if entry["subtitle"] and not found(entry["subtitle"]):
+                entry["subtitle"] = ""
             if entry["dates"] and not found(entry["dates"]):
                 entry["dates"] = ""
             bullets = [bullet for bullet in entry["bullets"] if numbers_found(bullet)]
@@ -1113,7 +1151,8 @@ def _ground_tailored_resume(tailored: dict, resume_text: str) -> tuple[dict, lis
             entry["bullets"] = bullets
             kept.append(entry)
         section["entries"] = kept
-    tailored["sections"] = [section for section in tailored["sections"] if section["entries"]]
+    tailored["sections"] = [section for section in tailored["sections"]
+                            if section["text"] or section["skill_groups"] or section["entries"]]
     return tailored, removed_skills, notes
 
 

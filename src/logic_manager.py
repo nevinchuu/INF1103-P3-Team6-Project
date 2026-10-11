@@ -155,8 +155,11 @@ def keywords_found(skills, text):
 
 # All the words of a tailored resume (ai_manager.tailor_resume) as one text, for keywords_found
 def resume_as_text(resume):
-    parts = [resume["summary"], *resume["skills"]]
+    parts = []
     for section in resume["sections"]:
+        parts.append(section["text"])
+        for group in section["skill_groups"]:
+            parts += group["skills"]
         for entry in section["entries"]:
-            parts += [entry["title"], entry["organisation"], *entry["bullets"]]
+            parts += [entry["title"], entry["organisation"], entry["subtitle"], *entry["bullets"]]
     return "\n".join(parts)

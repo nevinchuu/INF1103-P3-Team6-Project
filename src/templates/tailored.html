@@ -93,24 +93,19 @@
   {% if resume.name %}<h3 class="paper-name">{{ resume.name }}</h3>{% endif %}
   {% if resume.contact %}<p class="paper-contact">{{ resume.contact }}</p>{% endif %}
 
-  {% if resume.summary %}
-  <h4 class="paper-heading">Summary</h4>
-  <p>{{ resume.summary }}</p>
-  {% endif %}
-
-  {% if resume.skills %}
-  <h4 class="paper-heading">Skills</h4>
-  <p>{{ resume.skills | join(" · ") }}</p>
-  {% endif %}
-
   {% for section in resume.sections %}
   <h4 class="paper-heading">{{ section.heading }}</h4>
+  {% if section.text %}<p>{{ section.text }}</p>{% endif %}
+  {% for group in section.skill_groups %}
+  <p>{% if group.label %}<strong>{{ group.label }}:</strong> {% endif %}{{ group.skills | join(", ") }}</p>
+  {% endfor %}
   {% for entry in section.entries %}
   <div class="paper-entry">
     <p class="paper-entry-head">
       <span><strong>{{ entry.title }}</strong>{% if entry.organisation and entry.organisation != entry.title %}, {{ entry.organisation }}{% endif %}</span>
       {% if entry.dates %}<em>{{ entry.dates }}</em>{% endif %}
     </p>
+    {% if entry.subtitle %}<p><em>{{ entry.subtitle }}</em></p>{% endif %}
     {% if entry.bullets %}<ul>{% for bullet in entry.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}
   </div>
   {% endfor %}
