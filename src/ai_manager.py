@@ -335,14 +335,15 @@ DOCX_EDITS_SCHEMA = {
                 "properties": {
                     "paragraph": {"type": "integer", "description": "The [number] of the paragraph"},
                     "text": {"type": "string", "description": "Its new wording. Empty string to remove a bullet."},
+                    "reason": {"type": "string",
+                               "description": "Why, in under 15 words, e.g. 'leads with SQL, which the job asks for'"},
                 },
-                "required": ["paragraph", "text"],
+                "required": ["paragraph", "text", "reason"],
                 "additionalProperties": False,
             },
         },
-        "changes": {**STRING_LIST, "description": "3-6 short notes on what was changed for this job and why"},
     },
-    "required": ["edits", "changes"],
+    "required": ["edits"],
     "additionalProperties": False,
 }
 
@@ -534,8 +535,8 @@ RULES:
   adding a keyword there would claim something the candidate never did. Leave those paragraphs out.
 - Remove only the few bullets that clearly do not help with this job, by giving them an empty text.
   Most bullets should be kept or reworded, and never remove every bullet under a heading.
-- changes: 3-6 short notes on what you changed and why,
-  e.g. "Reworded the profile to lead with SQL because the job asks for it".
+- reason: for each edit, why you made it, in under 15 words,
+  e.g. "leads with SQL, which the job asks for" or "not relevant to a data role".
 
 Return JSON only."""
 
@@ -1311,4 +1312,18 @@ def tailor_docx(paragraphs: list[dict], resume_text: str, job: dict) -> dict | N
     if result is None:
         return None
     edits, removed_skills, notes = _ground_docx_edits(result["edits"], capped, resume_text, avoid_keywords)
-    return {"edits": edits, "changes": result["changes"], "removed_skills": removed_skills, "notes": notes}
+
+    # What changed: one note per edit that was actually applied, with the AI's reason for it,
+    # so the list never mentions a change the safety check turned down
+    original = {paragraph["id"]: paragraph["text"] for paragraph in capped}
+    reasons = {}
+    for edit in result["edits"]:
+        if edit["paragraph"] in edits and edits[edit["paragraph"]] == edit["text"]:
+            reasons.setdefault(edit["paragraph"], edit["reason"])
+    changes = []
+    for paragraph_id, new_text in edits.items():
+        what = "Removed" if new_text == "" else "Reworded"
+        start = original[paragraph_id][:50] + ("..." if len(original[paragraph_id]) > 50 else "")
+        reason = reasons.get(paragraph_id, "")
+        changes.append(f'{what} "{start}"' + (f": {reason}" if reason else ""))
+    return {"edits": edits, "changes": changes, "removed_skills": removed_skills, "notes": notes}
