@@ -146,7 +146,6 @@ if __name__ == "__main__":
                     try:
                         top_jobs = logic_manager.filter_and_rank(profile, jobs, filters, TOP_N)
                         removed = logic_manager.count_removed(jobs, filters)
-                        unmatched = logic_manager.count_unmatched(jobs, filters)
                     except Exception as error:
                         logging.exception(f"event=search stage=logic outcome=failed error={type(error).__name__}")
                         io_manager.display_error("Could not filter and rank the jobs. Please try a new search.")
@@ -182,8 +181,6 @@ if __name__ == "__main__":
                         details = ", ".join(f"{count} {reason}" for reason, count in removed.items())
                         summary_text = f"{total_removed} removed by your filters ({details})."
                     io_manager.display_message(f"\n{source} {summary_text} Showing the best {len(top_jobs)}.")
-                    if unmatched:
-                        io_manager.display_message(io_manager.hidden_jobs_message(unmatched))
                     # If the search had to drop some preferences to find any listings, say so
                     step_message = io_manager.search_step_message(summary["search_step"], record["filters"])
                     if step_message:

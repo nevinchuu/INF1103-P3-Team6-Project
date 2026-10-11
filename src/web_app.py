@@ -106,7 +106,6 @@ def results(search_id):
         # 3. Logic layer, then 4. data layer: newly shown jobs are saved too (a failed save still shows them)
         ranked = {"jobs": logic_manager.filter_and_rank(result["profile"], result["all_jobs"], filters, show),
                   "removed": logic_manager.count_removed(result["all_jobs"], filters),
-                  "unmatched": logic_manager.count_unmatched(result["all_jobs"], filters),
                   "save_failed": False, "newly_saved": 0}
         try:
             ranked["newly_saved"] = database_functions.save_new_jobs(ranked["jobs"], result["resume"])
@@ -121,7 +120,6 @@ def results(search_id):
         **ranked,
         checked=len(result["all_jobs"]),
         step_message=result.get("step_message", ""),
-        hidden_message=io_manager.hidden_jobs_message(ranked.get("unmatched", 0)),
         jobs_per_search=JOBS_PER_SEARCH,
         skill_gaps=logic_manager.find_skill_gaps(ranked["jobs"]),
         filters=filters,
@@ -351,7 +349,6 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
         filters = io_manager.filters_for_step(filters, summary["search_step"])
         ranked = {"jobs": logic_manager.filter_and_rank(profile, jobs, filters, TOP_N),
                   "removed": logic_manager.count_removed(jobs, filters),
-                  "unmatched": logic_manager.count_unmatched(jobs, filters),
                   "save_failed": False, "newly_saved": 0}
         try:
             ranked["newly_saved"] = database_functions.save_new_jobs(ranked["jobs"], resume_name)

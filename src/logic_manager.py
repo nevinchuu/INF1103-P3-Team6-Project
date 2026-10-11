@@ -132,12 +132,6 @@ def filter_and_rank(profile, jobs, filters, top_n=5):
     return select_top_jobs(profile, kept, top_n)
 
 
-# Counts the jobs that pass the user's filters but match none of the candidate's skills,
-# which filter_and_rank hides, so the user can be told how many
-def count_unmatched(jobs, filters):
-    return sum(1 for job in jobs if passes_filters(job, filters) and not job.get("matched_skills"))
-
-
 # The skills missing from the most jobs, as [(skill, number of jobs)], most common first.
 # Only skills missing from 2 or more jobs; "SQL" and "sql" count as one skill
 def find_skill_gaps(jobs):

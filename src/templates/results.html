@@ -123,14 +123,11 @@
 
 {% if jobs %}
   {% if newly_saved %}<p class="muted small saved-note">{{ newly_saved }} new job{{ 's' if newly_saved != 1 }} added to <a href="{{ url_for('saved') }}">Saved jobs</a>.</p>{% endif %}
-  {% if hidden_message %}<p class="muted small saved-note">{{ hidden_message }}</p>{% endif %}
   {{ job_list(jobs) }}
 {% else %}
   <div class="empty card">
     <h3>No jobs matched</h3>
-    {% if unmatched %}
-    <p class="muted">{{ hidden_message }} Try a new search with a resume that lists more of your skills.</p>
-    {% elif removed %}
+    {% if removed %}
     {% set strictest = removed | dictsort(by="value") | last %}
     <p class="muted">Your {{ strictest[0] }} filter removed the most jobs ({{ strictest[1] }} of {{ checked }}). Try loosening it above.</p>
     {% else %}
