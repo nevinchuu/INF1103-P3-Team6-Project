@@ -13,9 +13,10 @@ SENIORITY_LEVELS = [
 ]
 ANY = "Any"  # the filter value meaning "no preference" (from io_manager)
 # A job this many levels or more above the candidate's ranks below jobs nearer their level,
-# e.g. "Senior Executive" and up for a "Fresh/entry level" candidate. Smaller gaps only break ties,
-# because the level order is rough
-FAR_ABOVE_LEVELS = 3
+# e.g. "Senior Executive" and up for a "Fresh/entry level" candidate. "Executive" (3 levels up)
+# is a common level for graduate roles in Singapore, so it isn't counted. Smaller gaps only
+# break ties, because the level order is rough
+FAR_ABOVE_LEVELS = 4
 SKILL_GAP_LIMIT = 5  # most common missing skills returned by find_skill_gaps
 
 # Checks the link format only, without going online, so it is instant and
