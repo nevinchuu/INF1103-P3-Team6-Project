@@ -193,7 +193,7 @@ def download_tailored(search_id):
     result = search["result"]
     stem = os.path.splitext(result["resume_name"])[0]
     filename = secure_filename(f"{stem}_{result['job']['title']}.docx") or "tailored_resume.docx"
-    return send_file(io.BytesIO(io_manager.write_resume_docx(result["resume"])), as_attachment=True,
+    return send_file(io.BytesIO(result["docx_bytes"]), as_attachment=True,
                      download_name=filename,
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
@@ -265,8 +265,7 @@ def start_tailor():
         return jsonify(error=problem), 400
 
     search_id = io_manager.start_task(job_url=job["job_url"])
-    threading.Thread(target=run_tailor, args=(search_id, resume_text, os.path.basename(path), job),
-                     daemon=True).start()
+    threading.Thread(target=run_tailor, args=(search_id, resume_text, path, job), daemon=True).start()
     return jsonify(search_id=search_id)
 
 
@@ -361,8 +360,10 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
                                      "Please try again.")
 
 
-def run_tailor(search_id, resume_text, resume_name, job):
+def run_tailor(search_id, resume_text, resume_path, job):
     """Tailors a resume for one job in a background thread (2. AI layer, 1 AI call).
+    A Word resume is reworded in place, so the download keeps its own layout; a PDF is rewritten
+    into a new Word file.
 
     Progress bar: 0-25% fetching the job description, 25-90% the AI rewrite, then checks.
     """
@@ -374,7 +375,12 @@ def run_tailor(search_id, resume_text, resume_name, job):
 
         io_manager.update_task(search_id, percent=25,
                                message="Tailoring your resume with AI (about 20-40 seconds)...")
-        tailored_resume = ai_manager.tailor_resume(resume_text, full_job)
+        is_docx = resume_path.lower().endswith(".docx")
+        if is_docx:
+            paragraphs = io_manager.read_docx_paragraphs(resume_path)
+            tailored_resume = ai_manager.tailor_docx(paragraphs, resume_text, full_job)
+        else:
+            tailored_resume = ai_manager.tailor_resume(resume_text, full_job)
         if tailored_resume is None:
             io_manager.update_task(search_id, status="error",
                                    error="The AI could not tailor your resume. Check your internet connection "
@@ -383,24 +389,42 @@ def run_tailor(search_id, resume_text, resume_name, job):
 
         # 3. Logic layer: which of the job's key skills the resume shows, before and after
         io_manager.update_task(search_id, percent=92, message="Checking the result...")
-        resume = tailored_resume["resume"]
         required = job.get("required_skills", [])
         # Skills the job wants that the resume doesn't show: never added, so the user can decide
         not_added = {skill.lower(): skill
                      for skill in [*job.get("missing_skills", []), *tailored_resume["removed_skills"]]}
 
+        if is_docx:
+            # The preview: every paragraph with its new wording, marked if changed or removed
+            edits = tailored_resume["edits"]
+            preview = [{**paragraph, "text": edits.get(paragraph["id"]) or paragraph["text"],
+                        "changed": paragraph["id"] in edits, "removed": edits.get(paragraph["id"]) == ""}
+                       for paragraph in paragraphs]
+            resume = None
+            changes = tailored_resume["changes"]
+            tailored_text = "\n".join(paragraph["text"] for paragraph in preview if not paragraph["removed"])
+            docx_bytes = io_manager.write_edited_docx(resume_path, edits)
+        else:
+            preview = None
+            resume = tailored_resume["resume"]
+            changes = resume.pop("changes")
+            tailored_text = logic_manager.resume_as_text(resume)
+            docx_bytes = io_manager.write_resume_docx(resume)
+
         result = {
             "job": job,
-            "resume_name": resume_name,
+            "resume_name": os.path.basename(resume_path),
             "resume": resume,
-            "changes": resume.pop("changes"),
+            "paragraphs": preview,
+            "docx_bytes": docx_bytes,
+            "changes": changes,
             "not_added": list(not_added.values()),
             "notes": tailored_resume["notes"],
             "had_description": details is not None,
             "is_open": details["is_open"] if details else True,
             "required": required,
             "covered_before": logic_manager.keywords_found(required, resume_text),
-            "covered_after": logic_manager.keywords_found(required, logic_manager.resume_as_text(resume)),
+            "covered_after": logic_manager.keywords_found(required, tailored_text),
         }
         io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
 

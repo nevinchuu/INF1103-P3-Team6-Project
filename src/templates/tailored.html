@@ -66,6 +66,29 @@
 </div>
 
 <h2 class="section-title">Preview</h2>
+{% if paragraphs %}
+<p class="muted small">Your Word file keeps its own layout: only the <mark class="paper-changed">highlighted</mark>
+  paragraphs were reworded{% if paragraphs | selectattr("removed") | list %}, and <del>crossed-out</del> bullets were removed{% endif %}.</p>
+<article class="paper" aria-label="Tailored resume preview">
+  {% for paragraph in paragraphs %}
+  {% set marked = "paper-changed" if paragraph.changed and not paragraph.removed else "" %}
+  {% if paragraph.kind == "bullet" %}
+    {% if loop.first or loop.previtem.kind != "bullet" %}<ul>{% endif %}
+    <li class="{{ marked }}">{% if paragraph.removed %}<del>{{ paragraph.text }}</del>{% else %}{{ paragraph.text }}{% endif %}</li>
+    {% if loop.last or loop.nextitem.kind != "bullet" %}</ul>{% endif %}
+  {% elif paragraph.kind == "name" %}
+  <h3 class="paper-name">{{ paragraph.text }}</h3>
+  {% elif paragraph.kind == "heading" %}
+  <h4 class="paper-heading">{{ paragraph.text }}</h4>
+  {% elif paragraph.kind == "entry" %}
+  {% set parts = paragraph.text.split("\t") %}
+  <p class="paper-entry-head"><strong>{{ parts[0] }}</strong><em>{{ parts[1:] | join(" ") }}</em></p>
+  {% else %}
+  <p class="{{ 'paper-contact' if paragraph.centered else '' }} {{ marked }}">{{ paragraph.text }}</p>
+  {% endif %}
+  {% endfor %}
+</article>
+{% else %}
 <article class="paper" aria-label="Tailored resume preview">
   {% if resume.name %}<h3 class="paper-name">{{ resume.name }}</h3>{% endif %}
   {% if resume.contact %}<p class="paper-contact">{{ resume.contact }}</p>{% endif %}
@@ -93,6 +116,7 @@
   {% endfor %}
   {% endfor %}
 </article>
+{% endif %}
 
 <div class="form-actions">
   <a class="btn btn-secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">View job on MyCareersFuture</a>

@@ -534,6 +534,9 @@ details.optional .grid { margin-top: 16px; }
 .paper-entry-head em { color: var(--muted); }
 .paper ul { margin: 4px 0 0; padding-left: 20px; }
 .paper li + li { margin-top: 2px; }
+/* A Word resume tailored in place: what was reworded, and bullets that were removed */
+.paper-changed { background: var(--good-soft); border-radius: 4px; padding: 0 4px; color: inherit; }
+.paper del { color: var(--muted); }
 
 /* ---------- Small screens ---------- */
 @media (max-width: 680px) {
