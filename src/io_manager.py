@@ -12,6 +12,8 @@ from pypdf import PdfReader
 RESUME_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resumes")
 ALLOWED_EXTENSIONS = [".pdf", ".docx"]
 MIN_RESUME_CHARS = 100
+MIN_WORDS_TO_EDIT = 12  # a plain Word paragraph this long is body text (e.g. a profile), not a name or contact line
+TYPED_BULLET = re.compile(r"^\s*[•\-–*·]\s+")  # a bullet typed as a character, e.g. "• Built dashboards"
 MAX_SALARY = 50000
 MAX_EXPERIENCE_YEARS = 60
 LINE_WIDTH = 78
@@ -215,6 +217,75 @@ def write_resume_docx(resume):
                 paragraph.add_run(f"\t{entry['dates']}").italic = True
             for bullet in entry["bullets"]:
                 document.add_paragraph(bullet, style="List Bullet")
+
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+def read_docx_paragraphs(path):
+    """Return a Word resume's paragraphs, for tailoring it in place (ai_manager.tailor_docx).
+    One dict per non-empty paragraph, in order:
+      id:       its position in the document (write_edited_docx uses it)
+      text:     its text, without a typed bullet character
+      kind:     "name" (the first paragraph), "heading", "entry" (a line with a tab, e.g. title then dates),
+                "bullet" or "text"
+      centered: True if centred, e.g. a contact line
+      editable: True for bullets and long plain paragraphs (e.g. a profile). Lines with mixed formatting,
+                a tab or a link are never edited, so their layout stays exactly as it is."""
+    document = Document(path)
+    paragraphs = []
+    for position, paragraph in enumerate(document.paragraphs):
+        text = paragraph.text
+        if not text.strip():
+            continue
+        runs = [run for run in paragraph.runs if run.text]
+        formats = {(bool(run.bold), bool(run.italic), bool(run.underline)) for run in runs}
+        all_bold = bool(runs) and all(run.bold for run in runs)
+        is_bullet = "list" in paragraph.style.name.lower() or TYPED_BULLET.match(text) is not None
+        # A link or field is not one of paragraph.runs, so its text would be lost when the runs are replaced
+        only_runs = "".join(run.text for run in runs) == text
+
+        if not paragraphs:
+            kind = "name"
+        elif "\t" in text:
+            kind = "entry"
+        elif is_bullet:
+            kind = "bullet"
+        elif all_bold or paragraph.style.name.lower().startswith("heading"):
+            kind = "heading"
+        else:
+            kind = "text"
+        editable = (only_runs and len(formats) == 1 and kind in ("bullet", "text")
+                    and (kind == "bullet" or len(text.split()) >= MIN_WORDS_TO_EDIT))
+
+        paragraphs.append({
+            "id": position,
+            "text": TYPED_BULLET.sub("", text).strip(),
+            "kind": kind,
+            "centered": paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER,
+            "editable": editable,
+        })
+    return paragraphs
+
+
+def write_edited_docx(path, edits):
+    """Return a copy of a Word resume with some paragraphs reworded, as the bytes of a Word file.
+    edits: {paragraph id: new text} from ai_manager.tailor_docx, where "" removes that bullet.
+    Everything else (fonts, colours, spacing, order) stays exactly as it was."""
+    document = Document(path)
+    paragraphs = document.paragraphs
+    for position, new_text in edits.items():
+        paragraph = paragraphs[position]
+        if new_text == "":
+            paragraph._element.getparent().remove(paragraph._element)
+            continue
+        # Keep a typed bullet character, and the first run's formatting for the whole paragraph
+        typed_bullet = TYPED_BULLET.match(paragraph.text)
+        runs = [run for run in paragraph.runs if run.text]
+        runs[0].text = (typed_bullet.group(0) if typed_bullet else "") + new_text
+        for run in runs[1:]:
+            run.text = ""
 
     output = io.BytesIO()
     document.save(output)
