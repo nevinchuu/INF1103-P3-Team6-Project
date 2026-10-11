@@ -109,8 +109,10 @@ if __name__ == "__main__":
                             io_manager.display_message("Searching MyCareersFuture and analysing the listings. "
                                                        "This can take a minute...")
                             summary = {}
+                            # The portal is searched with the preferences it can filter; with none of
+                            # them matching, it falls back to the job type only, then to no filters
                             jobs = ai_manager.search_and_extract_jobs(profile, limit_per_search=JOBS_PER_SEARCH,
-                                                                      summary=summary)
+                                                                      summary=summary, preferences=record["filters"])
                             logging.info(f"event=search stage=jobs summary={summary}")
                             problem = ""
                             if summary["listings_found"] == 0:
@@ -139,9 +141,11 @@ if __name__ == "__main__":
                         continue
 
                     # ---------- 3. Logic layer: filter, rank and keep the top jobs ----------
+                    # Only the preferences the search kept: one it had to drop would empty the results again
+                    filters = io_manager.filters_for_step(record["filters"], summary["search_step"])
                     try:
-                        top_jobs = logic_manager.filter_and_rank(profile, jobs, record["filters"], TOP_N)
-                        removed = logic_manager.count_removed(jobs, record["filters"])
+                        top_jobs = logic_manager.filter_and_rank(profile, jobs, filters, TOP_N)
+                        removed = logic_manager.count_removed(jobs, filters)
                     except Exception as error:
                         logging.exception(f"event=search stage=logic outcome=failed error={type(error).__name__}")
                         io_manager.display_error("Could not filter and rank the jobs. Please try a new search.")
@@ -177,6 +181,10 @@ if __name__ == "__main__":
                         details = ", ".join(f"{count} {reason}" for reason, count in removed.items())
                         summary_text = f"{total_removed} removed by your filters ({details})."
                     io_manager.display_message(f"\n{source} {summary_text} Showing the best {len(top_jobs)}.")
+                    # If the search had to drop some preferences to find any listings, say so
+                    step_message = io_manager.search_step_message(summary["search_step"], record["filters"])
+                    if step_message:
+                        io_manager.display_error(step_message)
 
                 else:
                     # ---------- Show my last results / View one job in detail (data layer) ----------

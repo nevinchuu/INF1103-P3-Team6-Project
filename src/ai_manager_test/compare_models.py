@@ -44,10 +44,10 @@ _fetch_cache = {}
 _original_fetch_jobs = ai_manager.fetch_jobs
 
 
-def _cached_fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
-    key = (search_query.strip().lower(), limit)
+def _cached_fetch_jobs(search_query: str, limit: int = 10, portal_filters: dict | None = None) -> list[dict] | None:
+    key = (search_query.strip().lower(), limit, repr(sorted((portal_filters or {}).items())))
     if key not in _fetch_cache:
-        jobs = _original_fetch_jobs(search_query, limit)
+        jobs = _original_fetch_jobs(search_query, limit, portal_filters)
         if not jobs:
             return jobs  # don't cache failures
         _fetch_cache[key] = jobs

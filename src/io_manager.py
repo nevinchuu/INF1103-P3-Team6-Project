@@ -526,6 +526,30 @@ def check_filters(values):
     return {**numbers, "job_type": job_type, "work_arrangement": work_arrangement}, ""
 
 
+def filters_for_step(filters, step):
+    """The filters to apply after a search, for the step ai_manager.search_and_extract_jobs ended on
+    (summary["search_step"]): "all" keeps every preference, "job type" keeps only the job type, and
+    "general" keeps none, so a preference the search had to drop doesn't empty the results again."""
+    if step == "all":
+        return filters
+    return {
+        "min_salary": 0,
+        "max_salary": MAX_SALARY,
+        "max_years_experience": MAX_EXPERIENCE_YEARS,
+        "job_type": filters["job_type"] if step == "job type" else ANY,
+        "work_arrangement": ANY,
+    }
+
+
+def search_step_message(step, filters):
+    """What to tell the user when the job search had to drop some preferences, or "" if it didn't."""
+    if step == "job type":
+        return f"No jobs matched all your preferences, so these match your job type ({filters['job_type']}) only."
+    if step == "general":
+        return "No jobs matched your preferences, so these are general results for your resume."
+    return ""
+
+
 def collect_input(ai_name="an AI service"):
     """Collect the resume and filters for one search. ai_name is shown in the privacy notice."""
     display_header("NEW SEARCH")

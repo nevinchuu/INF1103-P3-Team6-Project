@@ -115,6 +115,17 @@ API_TIMEOUT_SECONDS = 90       # longest wait for one AI reply before it counts 
 MAX_RESUME_CHARS = 20000       # longer resume text is cut, so a huge file can't overflow the AI's input limit
 MAX_RATE_LIMIT_WAIT = 90  # longer suggested waits usually mean the daily quota is used up
 
+# MyCareersFuture's own search filters (checked against its search API). Job type and minimum
+# salary filter well; for work arrangement it only has "Telecommuting", the closest to Remote or
+# Hybrid. Maximum salary and years of experience can't be filtered there, so logic_manager does those.
+PORTAL_EMPLOYMENT_TYPES = {  # job type preference -> the portal's employment types (either one counts)
+    "Full Time": ["Full Time", "Permanent"],  # permanent jobs are full-time too
+    "Part Time": ["Part Time"],
+    "Contract": ["Contract"],
+    "Internship/Attachment": ["Internship/Attachment"],
+}
+PORTAL_TELECOMMUTING = 2  # id of "Telecommuting" in the portal's flexibleWorkArrangements filter
+
 # The API client object. Starts empty and is created the first time it's needed (_get_client).
 # The leading underscore is a Python convention meaning "internal, don't use from other files".
 _client = None
@@ -917,15 +928,19 @@ def _clean_html(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
-    """Fetches job listings from MyCareersFuture. No filtering is done here.
-    Retries timeouts, server errors and replies in an unexpected format; returns an empty list
-    if every attempt fails. A single listing in an unexpected format is skipped, not fatal."""
+def fetch_jobs(search_query: str, limit: int = 10, portal_filters: dict | None = None) -> list[dict] | None:
+    """Fetches job listings from MyCareersFuture. portal_filters are the portal's own search
+    filters (from _search_steps), e.g. {"employmentTypes": ["Internship/Attachment"]}.
+    Retries timeouts, server errors and replies in an unexpected format. Returns the listings
+    ([] if the portal has none), or None if every attempt failed, so a caller can tell
+    "nothing listed" from "the portal isn't working". A single listing in an unexpected
+    format is skipped, not fatal."""
     raw_jobs = None
     for attempt in range(1, JOB_FETCH_ATTEMPTS + 1):
         try:
-            # The portal reads the search words from the JSON body; in the URL they are ignored
-            resp = requests.post(JOBS_API_URL, params={"limit": limit}, json={"search": search_query}, timeout=20)
+            # The portal reads the search words and filters from the JSON body; in the URL they are ignored
+            resp = requests.post(JOBS_API_URL, params={"limit": limit},
+                                 json={"search": search_query, **(portal_filters or {})}, timeout=20)
             resp.raise_for_status()  # turns HTTP errors (e.g. 500) into exceptions
             data = resp.json()
             raw_jobs = data.get("results") if isinstance(data, dict) else None
@@ -935,7 +950,7 @@ def fetch_jobs(search_query: str, limit: int = 10) -> list[dict]:
         except (requests.RequestException, ValueError) as error:
             if attempt == JOB_FETCH_ATTEMPTS:
                 logging.error(f"Job search for '{search_query}' failed after {attempt} attempts: {error}")
-                return []
+                return None
             logging.warning(f"Job search for '{search_query}' failed ({type(error).__name__}); retrying...")
             time.sleep(2 * attempt)  # wait a little longer each time: 2s, then 4s
 
@@ -1069,36 +1084,76 @@ def extract_job_requirements(jobs: list[dict], profile: dict) -> list[dict]:
     return records
 
 
+def _search_steps(preferences: dict | None) -> list[tuple[str, dict]]:
+    """The portal searches to try, most specific first, as [(step, portal filters)]:
+      "all":      every preference the portal can filter (job type, minimum salary, telecommuting
+                  for Remote or Hybrid)
+      "job type": the job type only
+      "general":  no filters
+    A step that would search the same way as the one before it is left out, e.g. "job type" when
+    the job type is "Any". preferences: the user's filters (io_manager.prompt_filters), or None."""
+    preferences = preferences or {}
+    job_type = {}
+    if preferences.get("job_type") in PORTAL_EMPLOYMENT_TYPES:
+        job_type = {"employmentTypes": PORTAL_EMPLOYMENT_TYPES[preferences["job_type"]]}
+    everything = dict(job_type)
+    if preferences.get("min_salary"):
+        everything["salary"] = preferences["min_salary"]
+    if preferences.get("work_arrangement") in ("Remote", "Hybrid"):
+        everything["flexibleWorkArrangements"] = [PORTAL_TELECOMMUTING]
+
+    steps = [("all", everything)]
+    if job_type and job_type != everything:
+        steps.append(("job type", job_type))
+    if steps[-1][1]:
+        steps.append(("general", {}))
+    return steps
+
+
 def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_workers: int = 5,
-                            on_progress=None, summary: dict | None = None) -> list[dict]:
+                            on_progress=None, summary: dict | None = None,
+                            preferences: dict | None = None) -> list[dict]:
     """Searches the job portal with the profile's keywords and extracts each
     listing's requirements. Listings are de-duplicated by URL and sent to the AI
     in batches of JOB_BATCH_SIZE, with batches running in parallel.
+
+    preferences (optional): the user's filters (io_manager.prompt_filters). The portal is searched
+    with the ones it can filter (_search_steps). If no listings come back, it searches again with
+    the job type only, then with no filters. The step used goes in summary["search_step"], so the
+    caller can tell the user and keep only the preferences that still apply (io_manager.filters_for_step).
+    It doesn't step down when the portal itself fails: fewer filters wouldn't help.
 
     on_progress (optional) lets a UI show progress. It is called as
     on_progress(stage, done, total): stage "search" after each portal search,
     "analyse" after each AI batch finishes.
 
     summary (optional): a dict this fills in, so the caller can tell the user what happened:
-    {"searches_failed", "listings_found", "batches_failed", "listings_analysed"}.
+    {"search_step", "searches_failed", "listings_found", "batches_failed", "listings_analysed"}.
     A batch that fails is left out and counted; the other batches are still returned.
     """
     if summary is None:
         summary = {}
-    # A dict keyed by URL removes duplicates: the same job found by two searches is kept once
-    unique_jobs = {}
     keywords = profile["search_keywords"]
-    summary["searches_failed"] = 0
-    for done, keyword in enumerate(keywords, start=1):
-        logging.info(f"Searching portal for '{keyword}'...")
-        found = fetch_jobs(keyword, limit=limit_per_search)
-        if not found:
-            summary["searches_failed"] += 1  # failed, or nothing listed under that title
-        for job in found:
-            if job["job_url"] != "N/A":
-                unique_jobs.setdefault(job["job_url"], job)
-        if on_progress:
-            on_progress("search", done, len(keywords))
+    for step, portal_filters in _search_steps(preferences):
+        # A dict keyed by URL removes duplicates: the same job found by two searches is kept once
+        unique_jobs = {}
+        portal_failed = False
+        summary["search_step"] = step
+        summary["searches_failed"] = 0
+        for done, keyword in enumerate(keywords, start=1):
+            logging.info(f"Searching portal for '{keyword}' ({step} search filters: {portal_filters})...")
+            found = fetch_jobs(keyword, limit=limit_per_search, portal_filters=portal_filters)
+            if not found:
+                summary["searches_failed"] += 1  # failed, or nothing listed under that title
+            portal_failed = portal_failed or found is None
+            for job in found or []:
+                if job["job_url"] != "N/A":
+                    unique_jobs.setdefault(job["job_url"], job)
+            if on_progress:
+                on_progress("search", done, len(keywords))
+        if unique_jobs or portal_failed:
+            break
+        logging.info(f"No listings with the '{step}' search filters; searching with fewer filters.")
 
     # Split into batches of 10, e.g. 40 jobs -> [jobs 0-9, 10-19, 20-29, 30-39]
     jobs = list(unique_jobs.values())

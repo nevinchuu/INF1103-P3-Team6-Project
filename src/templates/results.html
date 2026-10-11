@@ -20,6 +20,9 @@
   <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
 </div>
 
+{% if step_message %}
+<p class="alert alert-info" role="status">{{ step_message }}</p>
+{% endif %}
 {% if filter_problem %}
 <p class="alert alert-error" role="alert">{{ filter_problem }} Showing your search's original filters.</p>
 {% endif %}

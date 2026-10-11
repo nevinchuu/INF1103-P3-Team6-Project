@@ -119,6 +119,7 @@ def results(search_id):
         profile=result["profile"],
         **ranked,
         checked=len(result["all_jobs"]),
+        step_message=result.get("step_message", ""),
         jobs_per_search=JOBS_PER_SEARCH,
         skill_gaps=logic_manager.find_skill_gaps(ranked["jobs"]),
         filters=filters,
@@ -325,8 +326,10 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
 
         io_manager.update_task(search_id, percent=25, message="Searching the job portal...")
         summary = {}
+        # The portal is searched with the preferences it can filter; with none of them matching,
+        # it falls back to the job type only, then to no filters (summary["search_step"])
         jobs = ai_manager.search_and_extract_jobs(profile, limit_per_search=JOBS_PER_SEARCH, on_progress=on_progress,
-                                                  summary=summary)
+                                                  summary=summary, preferences=filters)
         logging.info(f"event=web_search stage=jobs summary={summary}")
         if summary["listings_found"] == 0:
             io_manager.update_task(search_id, status="error",
@@ -339,8 +342,11 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
                                          "found. Check your API key, or wait a minute if the AI service is busy.")
             return
 
-        # 3. Logic layer and 4. data layer (a failed save still shows the results)
+        # 3. Logic layer and 4. data layer (a failed save still shows the results). Only the preferences
+        # the search kept are applied: one it had to drop would empty the results again
         io_manager.update_task(search_id, percent=94, message="Ranking and saving your matches...")
+        step_message = io_manager.search_step_message(summary["search_step"], filters)
+        filters = io_manager.filters_for_step(filters, summary["search_step"])
         ranked = {"jobs": logic_manager.filter_and_rank(profile, jobs, filters, TOP_N),
                   "removed": logic_manager.count_removed(jobs, filters),
                   "save_failed": False, "newly_saved": 0}
@@ -352,7 +358,7 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
 
         # all_jobs and filters let the results page re-rank without searching again
         result = {"profile": profile, "all_jobs": jobs, "filters": filters,
-                  "resume": resume_name, "ranked": ranked}
+                  "resume": resume_name, "ranked": ranked, "step_message": step_message}
         io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
 
     except InterruptedError:  # cancelled (io_manager.update_task)
