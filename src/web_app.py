@@ -16,8 +16,8 @@ threads need: a route for each page, and run_search / run_tailor, the work each 
 A search runs in a background thread so the page can show a progress bar:
 the browser starts it with POST /search, then asks GET /progress/<search_id>
 every second until it is done and opens /results/<search_id>.
-The results page can change the filters afterwards (?min_salary=...&show=10):
-that only re-ranks the jobs the search already checked, with no new AI calls.
+"Update matches" on the results page (POST /results/<search_id>/update) runs a new search with
+the new filters, reusing the profile so the resume isn't read again, and shows its progress the same way.
 
 "Tailor my resume" (/tailor?job_url=...) works the same way: POST /tailor starts it,
 the same /progress route reports on it, and /tailored/<id> shows the result.
@@ -92,7 +92,7 @@ def results(search_id):
         return redirect(url_for("index"))
 
     result = search["result"]
-    filters, show, problem = result["filters"], TOP_N, ""
+    filters, show, problem = result["filters"], result.get("show", TOP_N), ""
     if request.args:
         new_filters, problem = io_manager.check_filters(request.args)
         if not problem:
@@ -100,7 +100,7 @@ def results(search_id):
             show = request.args.get("show", TOP_N, type=int)
             show = show if show in SHOW_OPTIONS else TOP_N
 
-    if filters == result["filters"] and show == TOP_N:
+    if filters == result["filters"] and show == result.get("show", TOP_N):
         ranked = result["ranked"]  # the search's own results, saved when it finished
     else:
         # 3. Logic layer, then 4. data layer: newly shown jobs are saved too (a failed save still shows them)
@@ -249,6 +249,28 @@ def start_search():
     return jsonify(search_id=search_id)
 
 
+@app.post("/results/<search_id>/update")
+def update_search(search_id):
+    """"Update matches" on the results page: a new search with the new filters, reusing this search's
+    profile so the resume isn't read again. Opens the search page, which shows the new search's progress."""
+    search = io_manager.get_task(search_id)
+    if search is None or search["status"] != "done":
+        abort(404)
+    filters, problem = io_manager.check_filters(request.form)
+    if problem:
+        # The results page shows the problem for filters in its address
+        return redirect(url_for("results", search_id=search_id, **request.form))
+    show = request.form.get("show", TOP_N, type=int)
+    show = show if show in SHOW_OPTIONS else TOP_N
+
+    result = search["result"]
+    new_id = io_manager.start_task()
+    threading.Thread(target=run_search, daemon=True,
+                     args=(new_id, "", result["resume"], filters, "", ""),
+                     kwargs={"profile": result["profile"], "show": show}).start()
+    return redirect(url_for("index", search=new_id))
+
+
 @app.post("/tailor")
 def start_tailor():
     """Starts tailoring a resume for one job in a background thread. Returns {"search_id"};
@@ -296,24 +318,28 @@ def cancel_search(search_id):
 # BACKGROUND TASKS (the work each thread does, like main.py's search)
 # ==========================================
 
-def run_search(search_id, resume_text, resume_name, filters, fallback_qualification, fallback_skills):
+def run_search(search_id, resume_text, resume_name, filters, fallback_qualification, fallback_skills,
+               profile=None, show=TOP_N):
     """Runs the AI, logic and data layers in a background thread, reporting progress as it goes.
+    profile: a profile from an earlier search of the same resume ("Update matches"), so the
+    resume isn't read again. show: how many jobs to show and save.
 
     Progress bar: 0-25% reading the resume, 25-40% portal searches, 40-90% AI batches,
     then ranking and saving.
     """
     try:
-        # 2. AI layer: profile
-        io_manager.update_task(search_id, percent=5, message="Reading your resume with AI...")
-        profile = ai_manager.extract_candidate_profile(resume_text)
         if profile is None:
-            io_manager.update_task(search_id, status="error",
-                                   error="The AI could not analyse your resume. Check your internet connection "
-                                         "and API key, or wait a minute if the AI service is busy.")
-            return
+            # 2. AI layer: profile
+            io_manager.update_task(search_id, percent=5, message="Reading your resume with AI...")
+            profile = ai_manager.extract_candidate_profile(resume_text)
+            if profile is None:
+                io_manager.update_task(search_id, status="error",
+                                       error="The AI could not analyse your resume. Check your internet connection "
+                                             "and API key, or wait a minute if the AI service is busy.")
+                return
 
-        # 1. Input layer: details the AI missed, from the form's optional fields
-        profile = io_manager.fill_missing_data(profile, fallback_qualification, fallback_skills)
+            # 1. Input layer: details the AI missed, from the form's optional fields
+            profile = io_manager.fill_missing_data(profile, fallback_qualification, fallback_skills)
 
         # 2. AI layer: job search and requirements. on_progress is how ai_manager reports each finished step
         def on_progress(stage, done, total):
@@ -347,7 +373,7 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
         io_manager.update_task(search_id, percent=94, message="Ranking and saving your matches...")
         step_message = io_manager.search_step_message(summary["search_step"], filters)
         filters = io_manager.filters_for_step(filters, summary["search_step"])
-        ranked = {"jobs": logic_manager.filter_and_rank(profile, jobs, filters, TOP_N),
+        ranked = {"jobs": logic_manager.filter_and_rank(profile, jobs, filters, show),
                   "removed": logic_manager.count_removed(jobs, filters),
                   "save_failed": False, "newly_saved": 0}
         try:
@@ -358,7 +384,7 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
 
         # all_jobs and filters let the results page re-rank without searching again
         result = {"profile": profile, "all_jobs": jobs, "filters": filters,
-                  "resume": resume_name, "ranked": ranked, "step_message": step_message}
+                  "resume": resume_name, "ranked": ranked, "step_message": step_message, "show": show}
         io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
 
     except InterruptedError:  # cancelled (io_manager.update_task)

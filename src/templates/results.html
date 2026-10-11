@@ -74,11 +74,11 @@
 
 <h2 class="section-title">Top matches</h2>
 
-{# Changing these re-ranks the jobs this search already checked; no new AI search (web_app.results) #}
-<form class="card refine" method="get" action="{{ url_for('results', search_id=search_id) }}">
+{# Updating runs a new MyCareersFuture search with these filters, reusing this search's profile (web_app.update_search) #}
+<form class="card refine" method="post" action="{{ url_for('update_search', search_id=search_id) }}">
   <div class="refine-head">
     <h3>Adjust filters</h3>
-    <p class="muted small">Updates instantly from the {{ checked }} jobs already checked. No new search needed.</p>
+    <p class="muted small">Searches MyCareersFuture again with these filters, using the profile already read from your resume.</p>
   </div>
   <div class="refine-grid">
     <div class="field">
