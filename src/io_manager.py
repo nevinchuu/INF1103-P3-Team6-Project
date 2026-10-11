@@ -711,25 +711,6 @@ def fill_missing_data(profile, qualification, skills_text):
     return profile
 
 
-def run_search(process_function, record):
-    """Run one search, offering a retry if it fails."""
-    while True:
-        display_message("\nAnalysing your resume and searching for jobs. This can take a minute...")
-        try:
-            profile, jobs = process_function(record)
-        except Exception as error:
-            display_error(f"Something went wrong during the search ({type(error).__name__}: {error}).")
-            profile, jobs = None, []
-
-        problem = check_ai_result(profile, jobs)
-        if problem == "":
-            return profile, [job for job in jobs if isinstance(job, dict)]
-
-        display_error(problem)
-        if not prompt_yes_no("Try again?"):
-            return None, []
-
-
 # Progress of the web interface's background tasks (a search, or tailoring a resume), by id:
 # {"status": "running" | "done" | "error" | "cancelled", "percent", "message", "result", "error"}
 # (tailoring tasks also have "job_url"). The browser asks for this every second to draw the progress bar.

@@ -4,8 +4,6 @@ import os
 import tempfile
 import time
 
-json_database = []
-
 # The database file lives in <project root>/data/, wherever the program is run from
 DATABASE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "job_listings.json")
 
@@ -167,19 +165,3 @@ def reorder_ids(data_main):
 
     return data_main
 
-
-# iterate through to_remove, an array of integers and remove specified IDs from database
-# example input [1,12,35,22]
-def remove_by_ID(to_remove, data_main):
-    # Create IDs for entries if IDs doesnt exist
-    data_main = reorder_ids(data_main)
-
-    # Remove the highest IDs first, so a removal never shifts the IDs still to be removed
-    # ([1, 3] would otherwise remove jobs 1 and 4). IDs that don't exist are skipped: a negative
-    # one would remove a job counted from the end, and one past the end would raise IndexError
-    # (type() rather than isinstance(), because True counts as 1)
-    valid_ids = {job_id for job_id in to_remove if type(job_id) is int and 0 <= job_id < len(data_main)}
-    for job_id in sorted(valid_ids, reverse=True):
-        data_main.pop(job_id)
-
-    return reorder_ids(data_main)
