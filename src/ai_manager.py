@@ -372,7 +372,8 @@ def build_prompt(record: dict, task: str) -> str:
     candidate_profile: record = {"resume_text": str}
     job_requirements:  record = {"jobs": list[dict], "candidate": dict (candidate record)}
     tailored_resume:   record = {"resume_text": str, "job": dict (job record, with description if known)}
-    docx_edits:        record = {"paragraphs": list[dict] (io_manager.read_docx_paragraphs), "job": dict}
+    docx_edits:        record = {"paragraphs": list[dict] (io_manager.read_docx_paragraphs), "job": dict,
+                                 "use_keywords": list[str], "avoid_keywords": list[str] (_job_keywords)}
     """
     if task == "candidate_profile":
         # f"""...""" is a multi-line f-string: {...} parts are replaced with values
@@ -500,25 +501,31 @@ you can only change the paragraphs marked with a [number].
 JOB:
 Title: {job.get('title')}
 Company: {job.get('company')}
-Key skills: {', '.join(job.get('required_skills', [])) or 'Not known'}
-Listed skills: {', '.join(job.get('listed_skills', [])) or 'None'}
 Description: {job.get('description') or 'Not available'}
+
+JOB KEYWORDS THE RESUME SHOWS (use these words where they describe what the resume shows):
+{', '.join(record["use_keywords"]) or 'None'}
+
+JOB KEYWORDS THE RESUME DOES NOT SHOW (never use these words):
+{', '.join(record["avoid_keywords"]) or 'None'}
 
 RESUME (one paragraph per line; only [numbered] ones can be changed):
 {resume_lines}
 
 RULES:
-- Use ONLY facts in the resume. Never add a skill, tool, employer, job title, qualification, date,
-  number or achievement that is not in the resume, even if the job asks for it.
+- Use ONLY facts in the resume. Never add a skill, tool, employer, job title, qualification, date
+  or achievement that is not in the resume, even if the job asks for it.
+- Never add a number, duration or count (e.g. "2 years of experience") that is not in the resume.
 - edits: only the paragraphs you change, each with its [number] and its new wording.
   Leave out paragraphs that are already a good fit. Paragraphs cannot be moved or added.
 - Keep each changed paragraph about as long as the original, so it still fits the layout.
 - (text) paragraphs such as a profile: aim them at this job, using only facts from the resume.
-- (bullet) paragraphs: start with an action verb, put what matters for this job first, use the job's
-  key skill words only where the resume shows that skill, and keep any numbers exactly.
-  Do not reword certification, course or award names.
-  To remove a bullet that does not help with this job, give it an empty text, but never remove
-  every bullet under a heading.
+- (bullet) paragraphs: start with an action verb, put what matters for this job first, describe the work
+  with the job's words from the first keyword list where they fit, and keep any numbers exactly.
+- Never change a list of names, e.g. "Relevant modules: ...", certifications, courses or awards:
+  adding a keyword there would claim something the candidate never did. Leave those paragraphs out.
+- Remove only the few bullets that clearly do not help with this job, by giving them an empty text.
+  Most bullets should be kept or reworded, and never remove every bullet under a heading.
 - changes: 3-6 short notes on what you changed and why,
   e.g. "Reworded the profile to lead with SQL because the job asks for it".
 
@@ -1167,19 +1174,33 @@ def tailor_resume(resume_text: str, job: dict) -> dict | None:
     return {"resume": resume, "removed_skills": removed_skills, "notes": notes}
 
 
+def _job_keywords(job: dict, resume_text: str) -> tuple[list[str], list[str]]:
+    """Splits a job's skills into (ones the resume shows, ones it doesn't), for tailor_docx.
+    A skill counts as shown if it is in the resume, or if the job analysis matched it to one of the
+    candidate's skills (e.g. "Business Data Analysis" matched by "Data Analysis")."""
+    source = _normalise(resume_text)
+    matched = {match["job_skill"].lower() for match in job.get("matched_skills", [])}
+    use, avoid = [], []
+    for skill in dict.fromkeys([*job.get("required_skills", []), *job.get("listed_skills", [])]):
+        if skill.lower() in matched or _appears_in(skill, source):
+            use.append(skill)
+        else:
+            avoid.append(skill)
+    return use, avoid
+
+
 def _ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: str,
-                       job: dict) -> tuple[dict, list[str], list[str]]:
+                       avoid_keywords: list[str]) -> tuple[dict, list[str], list[str]]:
     """The anti-hallucination check for tailor_docx: keeps only rewrites that add nothing new.
     Returns ({paragraph id: new text}, skills removed, notes about rewrites that were not used).
 
     A rewrite is used only if its paragraph may be edited, every number in it is in the resume,
-    and every job skill it mentions is in the resume. "" (remove) is only allowed for bullets,
-    and never for every bullet in a group (e.g. all the points under one job).
+    and it uses none of the job keywords the resume doesn't show (_job_keywords). "" (remove) is
+    only allowed for bullets, and never for every bullet in a group (e.g. all the points under one job).
     """
     source = _normalise(resume_text)
     source_numbers = _numbers_in(source)
     editable = {paragraph["id"]: paragraph for paragraph in paragraphs if paragraph["editable"]}
-    job_skills = list(dict.fromkeys([*job.get("required_skills", []), *job.get("listed_skills", [])]))
 
     kept, removed_skills, notes = {}, [], []
     for edit in edits:
@@ -1195,7 +1216,7 @@ def _ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: s
             notes.append(f"Kept {start} as it was: the new wording had a number that isn't in your resume.")
             continue
         new_text = _normalise(edit["text"])
-        added = [skill for skill in job_skills if _appears_in(skill, new_text) and not _appears_in(skill, source)]
+        added = [skill for skill in avoid_keywords if _appears_in(skill, new_text)]
         if added:
             removed_skills += added
             notes.append(f"Kept {start} as it was: the new wording added {', '.join(added)}, "
@@ -1239,8 +1260,10 @@ def tailor_docx(paragraphs: list[dict], resume_text: str, job: dict) -> dict | N
             break
         capped.append(paragraph)
 
-    result = run_task({"paragraphs": capped, "job": job}, "docx_edits")
+    use_keywords, avoid_keywords = _job_keywords(job, resume_text)
+    result = run_task({"paragraphs": capped, "job": job, "use_keywords": use_keywords,
+                       "avoid_keywords": avoid_keywords}, "docx_edits")
     if result is None:
         return None
-    edits, removed_skills, notes = _ground_docx_edits(result["edits"], capped, resume_text, job)
+    edits, removed_skills, notes = _ground_docx_edits(result["edits"], capped, resume_text, avoid_keywords)
     return {"edits": edits, "changes": result["changes"], "removed_skills": removed_skills, "notes": notes}
