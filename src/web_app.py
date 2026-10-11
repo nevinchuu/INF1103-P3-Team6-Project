@@ -10,7 +10,7 @@ threads need: a route for each page, and run_search / run_tailor, the work each 
 
     1. Input/output layer (io_manager)          -> resume files, form checks, display text, progress
     2. AI layer           (ai_manager)          -> candidate profile, job records, tailored resume
-    3. Logic layer        (logic_manager)       -> filtered and ranked jobs, skill gaps, keyword coverage
+    3. Logic layer        (logic_manager)       -> filtered and ranked jobs, skill gaps, skills a tailored resume shows
     4. Data layer         (database_functions)  -> saved jobs
 
 A search runs in a background thread so the page can show a progress bar:
@@ -386,10 +386,10 @@ def run_tailor(search_id, resume_text, resume_name, job):
                                          "and API key, or wait a minute if the AI service is busy.")
             return
 
-        # 3. Logic layer: which of the job's key skills the resume shows, before and after
+        # 3. Logic layer: which of the job card's matched skills the tailored resume still shows
         io_manager.update_task(search_id, percent=92, message="Checking the result...")
         resume = tailored_resume["resume"]
-        required = job.get("required_skills", [])
+        matched = job.get("matched_skills", [])
         # Skills the job wants that the resume doesn't show: never added, so the user can decide
         not_added = {skill.lower(): skill
                      for skill in [*job.get("missing_skills", []), *tailored_resume["removed_skills"]]}
@@ -403,9 +403,9 @@ def run_tailor(search_id, resume_text, resume_name, job):
             "notes": tailored_resume["notes"],
             "had_description": details is not None,
             "is_open": details["is_open"] if details else True,
-            "required": required,
-            "covered_before": logic_manager.keywords_found(required, resume_text),
-            "covered_after": logic_manager.keywords_found(required, logic_manager.resume_as_text(resume)),
+            "required": job.get("required_skills", []),
+            "matched": matched,
+            "shown": logic_manager.skills_shown(matched, tailored_resume["skill_evidence"], resume),
         }
         io_manager.update_task(search_id, status="done", percent=100, message="Done", result=result)
 

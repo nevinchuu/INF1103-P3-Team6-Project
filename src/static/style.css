@@ -501,6 +501,9 @@ details.optional .grid { margin-top: 16px; }
 .coverage > div { display: flex; flex-direction: column; }
 .coverage-num { font-size: 1.75rem; font-weight: 600; letter-spacing: -0.03em; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1.1; }
 .coverage-after { color: var(--good); }
+.skill-evidence { list-style: none; padding-left: 0; }
+.skill-evidence li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.skill-evidence li + li { margin-top: 8px; }
 
 .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 16px; }
 .split .card h2 + p, .split .card h2 + ul { margin-top: 10px; }
