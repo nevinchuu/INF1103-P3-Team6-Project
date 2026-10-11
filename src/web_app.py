@@ -352,10 +352,13 @@ def run_search(search_id, resume_text, resume_name, filters, fallback_qualificat
 
         io_manager.update_task(search_id, percent=25, message="Searching the job portal...")
         summary = {}
-        # The portal is searched with the preferences it can filter; with none of them matching,
-        # it falls back to the job type only, then to no filters (summary["search_step"])
-        jobs = ai_manager.search_and_extract_jobs(profile, limit_per_search=JOBS_PER_SEARCH, on_progress=on_progress,
-                                                  summary=summary, preferences=filters)
+        # The portal is searched with the preferences it can filter, and only listings that meet all of
+        # them are analysed; with none, it falls back to the job type only, then to no preferences
+        # (summary["search_step"])
+        jobs = ai_manager.search_and_extract_jobs(
+            profile, limit_per_search=JOBS_PER_SEARCH, on_progress=on_progress, summary=summary,
+            preferences=filters,
+            fits=lambda job, step: logic_manager.passes_filters(job, io_manager.filters_for_step(filters, step)))
         logging.info(f"event=web_search stage=jobs summary={summary}")
         if summary["listings_found"] == 0:
             io_manager.update_task(search_id, status="error",

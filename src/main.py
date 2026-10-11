@@ -109,10 +109,14 @@ if __name__ == "__main__":
                             io_manager.display_message("Searching MyCareersFuture and analysing the listings. "
                                                        "This can take a minute...")
                             summary = {}
-                            # The portal is searched with the preferences it can filter; with none of
-                            # them matching, it falls back to the job type only, then to no filters
-                            jobs = ai_manager.search_and_extract_jobs(profile, limit_per_search=JOBS_PER_SEARCH,
-                                                                      summary=summary, preferences=record["filters"])
+                            # The portal is searched with the preferences it can filter, and only listings
+                            # that meet all of them are analysed; with none, it falls back to the job type
+                            # only, then to no preferences
+                            jobs = ai_manager.search_and_extract_jobs(
+                                profile, limit_per_search=JOBS_PER_SEARCH, summary=summary,
+                                preferences=record["filters"],
+                                fits=lambda job, step: logic_manager.passes_filters(
+                                    job, io_manager.filters_for_step(record["filters"], step)))
                             logging.info(f"event=search stage=jobs summary={summary}")
                             problem = ""
                             if summary["listings_found"] == 0:

@@ -1088,10 +1088,11 @@ def _search_steps(preferences: dict | None) -> list[tuple[str, dict]]:
     """The portal searches to try, most specific first, as [(step, portal filters)]:
       "all":      every preference the portal can filter (job type, minimum salary, telecommuting
                   for Remote or Hybrid)
-      "job type": the job type only
+      "job type": the job type only (left out when the job type is "Any")
       "general":  no filters
-    A step that would search the same way as the one before it is left out, e.g. "job type" when
-    the job type is "Any". preferences: the user's filters (io_manager.prompt_filters), or None."""
+    Two steps can search the portal the same way but keep different listings, e.g. when only the
+    maximum salary is set: the caller's fits check (search_and_extract_jobs) keeps fewer at "all".
+    preferences: the user's filters (io_manager.prompt_filters), or None."""
     preferences = preferences or {}
     job_type = {}
     if preferences.get("job_type") in PORTAL_EMPLOYMENT_TYPES:
@@ -1103,25 +1104,28 @@ def _search_steps(preferences: dict | None) -> list[tuple[str, dict]]:
         everything["flexibleWorkArrangements"] = [PORTAL_TELECOMMUTING]
 
     steps = [("all", everything)]
-    if job_type and job_type != everything:
+    if job_type:
         steps.append(("job type", job_type))
-    if steps[-1][1]:
-        steps.append(("general", {}))
+    steps.append(("general", {}))
     return steps
 
 
 def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_workers: int = 5,
                             on_progress=None, summary: dict | None = None,
-                            preferences: dict | None = None) -> list[dict]:
+                            preferences: dict | None = None, fits=None) -> list[dict]:
     """Searches the job portal with the profile's keywords and extracts each
     listing's requirements. Listings are de-duplicated by URL and sent to the AI
     in batches of JOB_BATCH_SIZE, with batches running in parallel.
 
     preferences (optional): the user's filters (io_manager.prompt_filters). The portal is searched
-    with the ones it can filter (_search_steps). If no listings come back, it searches again with
-    the job type only, then with no filters. The step used goes in summary["search_step"], so the
-    caller can tell the user and keep only the preferences that still apply (io_manager.filters_for_step).
-    It doesn't step down when the portal itself fails: fewer filters wouldn't help.
+    with the ones it can filter (_search_steps).
+    fits (optional): fits(job, step) -> True if a listing, as the portal gives it, meets the
+    preferences that step keeps, e.g. the maximum salary, which the portal can't filter. Only
+    listings that fit are sent to the AI.
+    If no listings come back, or none fit, it tries again with the job type only, then with no
+    preferences. The step used goes in summary["search_step"], so the caller can tell the user and
+    keep only the preferences that still apply (io_manager.filters_for_step). It doesn't step down
+    when the portal itself fails: fewer filters wouldn't help.
 
     on_progress (optional) lets a UI show progress. It is called as
     on_progress(stage, done, total): stage "search" after each portal search,
@@ -1134,6 +1138,7 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
     if summary is None:
         summary = {}
     keywords = profile["search_keywords"]
+    fetched = {}  # (keyword, portal filters) -> listings, so a step that searches the same way doesn't search again
     for step, portal_filters in _search_steps(preferences):
         # A dict keyed by URL removes duplicates: the same job found by two searches is kept once
         unique_jobs = {}
@@ -1141,19 +1146,22 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
         summary["search_step"] = step
         summary["searches_failed"] = 0
         for done, keyword in enumerate(keywords, start=1):
-            logging.info(f"Searching portal for '{keyword}' ({step} search filters: {portal_filters})...")
-            found = fetch_jobs(keyword, limit=limit_per_search, portal_filters=portal_filters)
+            key = (keyword, repr(sorted(portal_filters.items())))
+            if key not in fetched:
+                logging.info(f"Searching portal for '{keyword}' ({step} search filters: {portal_filters})...")
+                fetched[key] = fetch_jobs(keyword, limit=limit_per_search, portal_filters=portal_filters)
+            found = fetched[key]
             if not found:
                 summary["searches_failed"] += 1  # failed, or nothing listed under that title
             portal_failed = portal_failed or found is None
             for job in found or []:
-                if job["job_url"] != "N/A":
+                if job["job_url"] != "N/A" and (fits is None or fits(job, step)):
                     unique_jobs.setdefault(job["job_url"], job)
             if on_progress:
                 on_progress("search", done, len(keywords))
         if unique_jobs or portal_failed:
             break
-        logging.info(f"No listings with the '{step}' search filters; searching with fewer filters.")
+        logging.info(f"No listings fit the '{step}' preferences; trying with fewer preferences.")
 
     # Split into batches of 10, e.g. 40 jobs -> [jobs 0-9, 10-19, 20-29, 30-39]
     jobs = list(unique_jobs.values())
