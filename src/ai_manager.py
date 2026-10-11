@@ -1173,7 +1173,8 @@ def _ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: s
     Returns ({paragraph id: new text}, skills removed, notes about rewrites that were not used).
 
     A rewrite is used only if its paragraph may be edited, every number in it is in the resume,
-    and every job skill it mentions is in the resume. "" (remove) is only allowed for bullets.
+    and every job skill it mentions is in the resume. "" (remove) is only allowed for bullets,
+    and never for every bullet in a group (e.g. all the points under one job).
     """
     source = _normalise(resume_text)
     source_numbers = _numbers_in(source)
@@ -1201,6 +1202,25 @@ def _ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: s
                          f"which isn't in your resume.")
             continue
         kept[edit["paragraph"]] = edit["text"]
+
+    # Bullets next to each other form a group, e.g. the points under one job. If all of a group's
+    # bullets would be removed, keep them all, so no job or section is left empty.
+    groups, current, above = [], [], ""
+    for paragraph in paragraphs:
+        if paragraph["kind"] == "bullet":
+            current.append(paragraph["id"])
+            continue
+        if current:
+            groups.append((above, current))
+            current = []
+        above = paragraph["text"].split("\t")[0]
+    if current:
+        groups.append((above, current))
+    for above, ids in groups:
+        if all(kept.get(paragraph_id) == "" for paragraph_id in ids):
+            for paragraph_id in ids:
+                del kept[paragraph_id]
+            notes.append(f'Kept every point under "{above}": removing them all would leave it empty.')
     return kept, list(dict.fromkeys(removed_skills)), notes
 
 
