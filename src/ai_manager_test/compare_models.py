@@ -20,6 +20,7 @@ from pathlib import Path
 import ai_manager_test
 import ai_manager  # noqa: E402
 import io_manager  # noqa: E402  (all output goes through the input/output layer)
+import logic_manager  # noqa: E402
 
 # (provider, model) pairs; providers are the keys of ai_manager.PROVIDERS.
 # Exact model IDs (not "-latest" aliases) so each run is repeatable.
@@ -41,7 +42,7 @@ RESULTS_DIR = Path(__file__).resolve().parent / "results"  # src/ai_manager_test
 # Models that search the same job title get the same listings, so differences
 # between them come from the model rather than from the job portal changing mid-run.
 _fetch_cache = {}
-_original_fetch_jobs = ai_manager.fetch_jobs
+_original_fetch_jobs = io_manager.fetch_jobs
 
 
 def _cached_fetch_jobs(search_query: str, limit: int = 10, portal_filters: dict | None = None) -> list[dict] | None:
@@ -54,7 +55,7 @@ def _cached_fetch_jobs(search_query: str, limit: int = 10, portal_filters: dict 
     return _fetch_cache[key]
 
 
-ai_manager.fetch_jobs = _cached_fetch_jobs
+io_manager.fetch_jobs = _cached_fetch_jobs
 
 
 def run_model(resume_text: str, provider: str, model: str) -> dict:
@@ -62,7 +63,11 @@ def run_model(resume_text: str, provider: str, model: str) -> dict:
     ai_manager.set_provider(provider, model)
     start = time.perf_counter()
     profile = ai_manager.extract_candidate_profile(resume_text)
-    jobs = ai_manager.search_and_extract_jobs(profile) if profile is not None else []
+    jobs = []
+    if profile is not None:
+        listings = io_manager.fetch_listings(profile["search_keywords"], logic_manager.search_steps(None), None)
+        answers = ai_manager.extract_requirements_for_listings(listings, profile)
+        jobs = logic_manager.add_requirements(listings, answers, profile)
     entry = {"provider": provider, "model": model, "seconds": round(time.perf_counter() - start, 1)}
     if profile is None:
         entry["error"] = "Could not extract candidate profile; see log."
@@ -74,7 +79,7 @@ def run_model(resume_text: str, provider: str, model: str) -> dict:
         for k in ("highest_qualification", "years_of_experience", "internship_months",
                   "seniority_level", "search_keywords")
     }
-    entry["output"] = ai_manager_test.format_output(profile, ai_manager_test.select_top_jobs(profile, jobs, top_n=TOP_N))
+    entry["output"] = ai_manager_test.format_output(profile, logic_manager.select_top_jobs(profile, jobs, TOP_N))
     return entry
 
 
