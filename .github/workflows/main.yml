@@ -33,11 +33,18 @@ jobs:
 
       # 4. Every Python file compiles (catches syntax errors)
       - name: Compile all Python files
-        run: python -m compileall -q src
+        run: python -m compileall -q src tests
 
-      # 5. Logic layer tests (fails the check if any test fails)
+      # 5. Tests for each layer, then the console and the web app from start to finish (fails the
+      #    check if any test fails). They use temporary files, typed answers and fake portal and AI
+      #    replies, so no keyboard, browser, internet, API key or data/job_listings.json is needed
       - name: Run tests
-        run: python tests/test_logic_manager.py
+        run: |
+          python tests/test_logic_manager.py
+          python tests/test_data_manager.py
+          python tests/test_io_manager.py
+          python tests/test_main.py
+          python tests/test_web_app.py
 
       # 6. Every layer imports and the web pages load. No API key is needed,
       #    because no search is run.
@@ -45,7 +52,7 @@ jobs:
         working-directory: src
         run: |
           python -c "
-          import main, io_manager, ai_manager, logic_manager, database_functions, web_app
+          import main, io_manager, ai_manager, logic_manager, data_manager, web_app
           client = web_app.app.test_client()
           for page in ('/', '/saved'):
               status = client.get(page).status_code

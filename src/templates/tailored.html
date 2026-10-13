@@ -28,6 +28,11 @@
 {% if required %}
 <section class="card">
   <h2>Skills matched for this job</h2>
+  {% if matched_with %}
+  <p class="muted small">This job was matched using {{ matched_with }}, not {{ resume_name }}, so its skill card
+    doesn't apply here. The tailored resume only uses skills that {{ resume_name }} shows; the job's other key
+    skills are listed under "Not added".</p>
+  {% else %}
   <p class="muted small">The skills your job card matched, and where the tailored resume shows each one.</p>
   <div class="coverage">
     <div><span class="coverage-num">{{ matched | length }}/{{ required | length }}</span><span class="muted small">job card</span></div>
@@ -44,6 +49,7 @@
     </li>
     {% else %}<li class="muted small">None of this job's key skills matched your resume.</li>{% endfor %}
   </ul>
+  {% endif %}
 </section>
 {% endif %}
 

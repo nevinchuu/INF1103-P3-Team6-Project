@@ -11,7 +11,7 @@
   <li{% if saved %} data-order="{{ loop.index }}"
       data-salary="{{ job.max_salary or job.min_salary or 0 }}"
       data-match="{{ (matched / required) if required else 0 }}"
-      data-text="{{ [job.title, job.company, job.location] | join(' ') | lower }}"{% endif %}>
+      data-text="{{ [job.title or '', job.company or '', job.location or ''] | join(' ') | lower }}"{% endif %}>
     <details class="job-card">
       <summary>
         {% if not saved %}<span class="job-rank">{{ loop.index }}</span>{% endif %}
@@ -21,6 +21,8 @@
         </span>
         <span class="job-side">
           <span class="job-salary">{{ format_salary(job) }}</span>
+          {# The logic layer's outcome (logic_manager.match_outcome); jobs saved before it existed have none #}
+          {% if job.match_outcome %}<span class="outcome outcome-{{ job.match_outcome.split()[0] | lower }}">{{ job.match_outcome }}</span>{% endif %}
           {% if required %}
           <span class="match" title="{{ matched }} of {{ required }} required skills matched">
             <span class="match-bar"><span style="width: {{ (100 * matched / required) | round | int }}%"></span></span>
@@ -32,6 +34,7 @@
       </summary>
 
       <div class="job-body">
+        {% if job.outcome_reason %}<p class="job-outcome"><strong>{{ job.match_outcome }}.</strong> {{ job.outcome_reason }}</p>{% endif %}
         <p class="job-reason">{{ job.suitability_reason }}</p>
 
         <dl class="facts">
