@@ -187,6 +187,7 @@ def select_top_jobs(profile: dict, jobs: list[dict], top_n: int) -> list[dict]:
     """The top_n jobs that best suit the candidate: requirements met first, then most key skills, share, level."""
     # Smallest tuple first: experience gap, education not met, far above level, -matched skills, -share, level gap
     def sort_key(job: dict) -> tuple:
+        """Sort key for one job: smaller sorts first, so the best match comes out on top."""
         experience_gap, education_ok, level_gap = requirement_gaps(profile, job)
         matched = len(job["matched_skills"])
         match_ratio = matched / len(job["required_skills"]) if job["required_skills"] else 0
@@ -256,6 +257,7 @@ def skills_shown(matched_skills: list[dict], skill_evidence: list[dict], parts: 
 
     # Within one part, so a quote can't join the end of one bullet to the start of the next
     def in_resume(text: str) -> bool:
+        """True if the text appears as whole words in one piece of the tailored resume."""
         text = normalise_text(text).rstrip(".,;:")  # a full stop the AI added doesn't count
         return bool(text) and any(re.search(rf"(?<!\w){re.escape(text)}(?!\w)", part) for part in parts)
 
@@ -315,6 +317,7 @@ def fit_edits_to_page_count(edits: dict[int, str], paragraphs: list[dict]) -> tu
     editable = {paragraph["id"]: paragraph for paragraph in paragraphs if paragraph["editable"]}
 
     def lines(text: str, paragraph: dict, width: float) -> int:
+        """How many lines the text takes in the paragraph, rounding up, at the given width."""
         return -(-len(text) // max(1, int(paragraph["chars_per_line"] * width)))  # rounds up
 
     spare, longer = 0, []
@@ -509,3 +512,26 @@ def ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: st
         reasons[edit["paragraph"]] = edit["reason"]
     return kept, reasons, list(dict.fromkeys(removed_skills)), notes
 
+
+# ==========================================
+# 5. WHICH SKILLS APPLY TO A RESUME
+# A job card's skills were worked out for the resume that found the job. For another resume they don't apply.
+# ==========================================
+
+def resume_view(job: dict, resume_name: str) -> tuple[dict, bool]:
+    """The job as one resume sees it, and whether that resume is the one that found it. For another resume the
+    card's matched skills are cleared, so the AI is not told them and none of them count as shown."""
+    if job.get("resume") == resume_name:
+        return job, True
+    return {**job, "matched_skills": []}, False
+
+
+def tailoring_skills(job: dict, same_resume: bool, avoid_keywords: list[str], removed_skills: list[str]) -> dict:
+    """The skills a tailored page shows: the card's matched skills, and the skills the job wants that the resume
+    doesn't show (never added, so the user can decide). Returns {"matched": [...], "not_added": [...]}."""
+    matched = job.get("matched_skills", []) if same_resume else []
+    # The card's missing skills are for the resume that found the job; for another one, its own gaps
+    missing = (job.get("missing_skills", []) if same_resume
+               else [skill for skill in job.get("required_skills", []) if skill in avoid_keywords])
+    not_added = {skill.lower(): skill for skill in [*missing, *removed_skills]}
+    return {"matched": matched, "not_added": list(not_added.values())}

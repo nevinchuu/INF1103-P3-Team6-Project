@@ -306,6 +306,21 @@ def test_copied_values_still_match_the_other_layers():
                                                                               io_manager.MAX_EXPERIENCE_YEARS)
 
 
+# 21. A job card's skills apply only to the resume that found the job; the others get the card without them
+def test_a_job_card_applies_only_to_the_resume_that_found_it():
+    job = make_job(resume="cv_a.pdf", matched_skills=[{"job_skill": "SQL", "candidate_skill": "SQL"}],
+                   missing_skills=["Python"], required_skills=["SQL", "Python", "C++"])
+    same_job, same_resume = logic_manager.resume_view(job, "cv_a.pdf")
+    other_job, other_resume = logic_manager.resume_view(job, "cv_b.pdf")
+    assert same_resume is True and same_job is job
+    assert other_resume is False and other_job["matched_skills"] == []
+    assert job["matched_skills"] == [{"job_skill": "SQL", "candidate_skill": "SQL"}]  # the caller's job is unchanged
+    assert logic_manager.tailoring_skills(job, True, [], []) == {
+        "matched": [{"job_skill": "SQL", "candidate_skill": "SQL"}], "not_added": ["Python"]}
+    assert logic_manager.tailoring_skills(job, False, ["Python", "C++"], ["Rust"]) == {
+        "matched": [], "not_added": ["Python", "C++", "Rust"]}
+
+
 def run_all_tests():
     """Runs every test_* function in this file. Returns how many failed."""
     tests = [function for name, function in globals().items() if name.startswith("test_") and callable(function)]
