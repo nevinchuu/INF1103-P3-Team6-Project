@@ -175,6 +175,152 @@ def test_skills_shown_checks_quotes_and_falls_back_to_skill_names():
                                                                   "Spreadsheets": "Microsoft Excel"}
 
 
+# 10. Match outcome: a job the candidate misses a requirement for is a stretch, whatever the skills;
+#     otherwise STRONG_MATCH_SHARE of the key skills (3 of 4 here) makes a strong match
+def test_match_outcome_combines_requirements_and_skills():
+    profile = {**PROFILE, "seniority_level": "Fresh/entry level"}
+    strong = make_job(matched_skills=matched("Python", "SQL", "Excel"))
+    fair = make_job(matched_skills=matched("Python"))
+    assert logic_manager.match_outcome(profile, strong)[0] == logic_manager.OUTCOME_STRONG
+    assert logic_manager.match_outcome(profile, fair)[0] == logic_manager.OUTCOME_FAIR
+
+    every_skill = matched("Python", "SQL", "Excel", "Tableau")
+    short_on_experience = logic_manager.match_outcome(profile, make_job(min_years_experience=3, matched_skills=every_skill))
+    assert short_on_experience == (logic_manager.OUTCOME_STRETCH, "This job needs 2 more years of experience.")
+    needs_degree = make_job(min_education="Bachelor's", matched_skills=every_skill)
+    assert logic_manager.match_outcome(profile, needs_degree)[0] == logic_manager.OUTCOME_STRETCH
+    far_above = make_job(position_levels=["Manager"], matched_skills=every_skill)
+    assert logic_manager.match_outcome(profile, far_above)[0] == logic_manager.OUTCOME_STRETCH
+    # Several gaps are all named
+    both = make_job(min_years_experience=2, min_education="Bachelor's", matched_skills=every_skill)
+    assert logic_manager.match_outcome(profile, both)[1] == ("This job needs 1 more year of experience "
+                                                             "and asks for Bachelor's or higher.")
+
+    # filter_and_rank gives every job it returns an outcome and a reason
+    ranked = logic_manager.filter_and_rank(profile, [strong, fair], NO_FILTERS, top_n=2)
+    assert [job["match_outcome"] for job in ranked] == [logic_manager.OUTCOME_STRONG, logic_manager.OUTCOME_FAIR]
+    assert all(job["outcome_reason"] for job in ranked)
+
+
+# 11. Search steps: every preference first, then the job type only (unless it is Any), then none
+def test_search_steps_loosen_preferences_in_order():
+    assert logic_manager.search_steps({**NO_FILTERS, "job_type": "Full Time"}) == ["all", "job type", "general"]
+    assert logic_manager.search_steps(NO_FILTERS) == ["all", "general"]
+    assert logic_manager.search_steps(None) == ["all", "general"]
+
+
+# 12. Job keywords for tailoring: a skill the resume shows (word for word, or matched under another
+#     name) may be used; one it doesn't show may not. Each skill is listed once
+def test_job_keywords_split_shown_and_missing_skills():
+    job = make_job(required_skills=["SQL", "Business Data Analysis", "Scala", "Java"],
+                   listed_skills=["SQL", "Tableau"],
+                   matched_skills=[{"job_skill": "Business Data Analysis", "candidate_skill": "Data Analysis"}])
+    use, avoid = logic_manager.job_keywords(job, "Wrote SQL queries in JavaScript and Data Analysis")
+    assert use == ["SQL", "Business Data Analysis"]
+    assert avoid == ["Scala", "Java", "Tableau"]  # "Java" is not found inside "JavaScript"
+
+
+def make_paragraph(paragraph_id, text, kind="bullet", chars_per_line=50):
+    """A paragraph like io_manager.read_docx_paragraphs returns."""
+    return {"id": paragraph_id, "text": text, "kind": kind, "editable": True, "chars_per_line": chars_per_line}
+
+
+# 13. Tailoring never empties a job's points: if every bullet under a heading would be removed,
+#     none of them are, and a note says why; removing some of them is fine
+def test_keep_bullet_groups_never_empties_a_heading():
+    paragraphs = [make_paragraph(0, "Data Analyst Intern\t2024", kind="entry"), make_paragraph(1, "Built dashboards"),
+                  make_paragraph(2, "Wrote SQL"), make_paragraph(3, "Cashier\t2023", kind="entry"),
+                  make_paragraph(4, "Served customers"), make_paragraph(5, "Handled payments")]
+    edits = {1: "", 2: "", 4: "", 5: "Took card and cash payments"}
+    kept, notes = logic_manager.keep_bullet_groups(edits, paragraphs)
+    assert kept == {4: "", 5: "Took card and cash payments"}
+    assert notes == [{"kind": "bullet_group_kept", "heading": "Data Analyst Intern"}]
+    assert edits == {1: "", 2: "", 4: "", 5: "Took card and cash payments"}  # the caller's edits are not changed
+
+
+# 14. Tailoring keeps the number of pages: a rewrite needing extra lines is kept only if shorter
+#     rewrites free at least as many lines
+def test_fit_edits_to_page_count_keeps_the_number_of_lines():
+    paragraphs = [make_paragraph(1, "x" * 100), make_paragraph(2, "y" * 40)]
+    longer = {2: "z" * 120}  # 1 line becomes 3, and nothing is freed
+    kept, notes = logic_manager.fit_edits_to_page_count(longer, paragraphs)
+    assert kept == {} and notes == [{"kind": "edit_too_long", "start": "y" * 40}]
+    # Removing the 2-line paragraph frees enough lines for the longer one
+    kept, notes = logic_manager.fit_edits_to_page_count({1: "", 2: "z" * 80}, paragraphs)
+    assert kept == {1: "", 2: "z" * 80} and notes == []
+
+
+# 15. After a search step drops preferences, only the ones it kept still apply
+def test_filters_for_step_keeps_only_the_preferences_still_applied():
+    preferences = {**NO_FILTERS, "min_salary": 4000, "max_salary": 6000, "job_type": "Full Time", "work_arrangement": "Remote"}
+    assert logic_manager.filters_for_step(preferences, "all") == preferences
+    assert logic_manager.filters_for_step(preferences, "job type") == {**NO_FILTERS, "job_type": "Full Time"}
+    assert logic_manager.filters_for_step(preferences, "general") == NO_FILTERS
+
+
+# 16. Skills worth building: missing from 2 or more jobs, counted once per job, "SQL" and "sql" as one
+def test_find_skill_gaps_counts_skills_missing_from_several_jobs():
+    jobs = [make_job(missing_skills=["SQL", "sql ", "Excel"]), make_job(missing_skills=["SQL", "Tableau"]),
+            make_job(missing_skills=["Excel"]), make_job()]
+    # Equal counts keep the order the skills first appear in, so every run gives the same list
+    assert logic_manager.find_skill_gaps(jobs) == [("SQL", 2), ("Excel", 2)]
+    assert logic_manager.find_skill_gaps([make_job(missing_skills=["R"])]) == []
+
+
+# 17. Every piece of text in a tailored resume, for checking which skills it shows
+def test_resume_parts_lists_every_piece_of_text():
+    resume = {"sections": [
+        {"text": "Analyst aiming at data roles", "skill_groups": [{"label": "Technical", "skills": ["SQL", "Python"]}],
+         "entries": []},
+        {"text": "", "skill_groups": [], "entries": [
+            {"title": "Intern", "organisation": "Acme", "subtitle": "Singapore", "bullets": ["Wrote SQL", "Built reports"]}]}]}
+    assert logic_manager.resume_parts(resume) == ["Analyst aiming at data roles", "SQL", "Python", "",
+                                                  "Intern", "Acme", "Singapore", "Wrote SQL", "Built reports"]
+
+
+# 18. Ranking gives back copies with the outcome added, and leaves the caller's job records unchanged
+def test_filter_and_rank_leaves_the_callers_jobs_unchanged():
+    jobs = [make_job(matched_skills=matched("Python", "SQL", "Excel"))]
+    ranked = logic_manager.filter_and_rank(PROFILE, jobs, NO_FILTERS, top_n=1)
+    assert ranked[0]["match_outcome"] == logic_manager.OUTCOME_STRONG
+    assert "match_outcome" not in jobs[0] and "outcome_reason" not in jobs[0]
+
+
+# 19. An education level the logic layer doesn't know asks for nothing (no crash), and a job with
+#     no key skills gets a plain reason instead of "0 of 0"
+def test_match_outcome_handles_unknown_education_and_no_key_skills():
+    profile = {**PROFILE, "seniority_level": "Fresh/entry level"}
+    outcome = logic_manager.match_outcome(profile, make_job(min_education="Degree", matched_skills=matched("Python", "SQL", "Excel")))
+    assert outcome[0] == logic_manager.OUTCOME_STRONG
+    assert logic_manager.match_outcome(profile, make_job(required_skills=[])) == (logic_manager.OUTCOME_FAIR,
+                                                                                  "You meet its requirements.")
+
+
+# 20. Values the logic layer copies (so it never imports another layer) still match the other layers
+def test_copied_values_still_match_the_other_layers():
+    import ai_manager  # imported here: only this test needs the AI layer's lists
+    assert logic_manager.EDUCATION_LEVELS == ai_manager.EDUCATION_LEVELS == io_manager.EDUCATION_LEVELS
+    assert logic_manager.SENIORITY_LEVELS == ai_manager.SENIORITY_LEVELS
+    assert logic_manager.ANY == io_manager.ANY
+    assert (logic_manager.MAX_SALARY, logic_manager.MAX_EXPERIENCE_YEARS) == (io_manager.MAX_SALARY,
+                                                                              io_manager.MAX_EXPERIENCE_YEARS)
+
+
+# 21. A job card's skills apply only to the resume that found the job; the others get the card without them
+def test_a_job_card_applies_only_to_the_resume_that_found_it():
+    job = make_job(resume="cv_a.pdf", matched_skills=[{"job_skill": "SQL", "candidate_skill": "SQL"}],
+                   missing_skills=["Python"], required_skills=["SQL", "Python", "C++"])
+    same_job, same_resume = logic_manager.resume_view(job, "cv_a.pdf")
+    other_job, other_resume = logic_manager.resume_view(job, "cv_b.pdf")
+    assert same_resume is True and same_job is job
+    assert other_resume is False and other_job["matched_skills"] == []
+    assert job["matched_skills"] == [{"job_skill": "SQL", "candidate_skill": "SQL"}]  # the caller's job is unchanged
+    assert logic_manager.tailoring_skills(job, True, [], []) == {
+        "matched": [{"job_skill": "SQL", "candidate_skill": "SQL"}], "not_added": ["Python"]}
+    assert logic_manager.tailoring_skills(job, False, ["Python", "C++"], ["Rust"]) == {
+        "matched": [], "not_added": ["Python", "C++", "Rust"]}
+
+
 def run_all_tests():
     """Runs every test_* function in this file. Returns how many failed."""
     tests = [function for name, function in globals().items() if name.startswith("test_") and callable(function)]
