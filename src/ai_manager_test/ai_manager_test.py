@@ -15,6 +15,7 @@ Once those managers exist, main.py should use them instead of this file.
 """
 
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -30,6 +31,10 @@ if str(SRC_DIR) not in sys.path:
 
 import ai_manager  # noqa: E402 (import after the sys.path change above)
 import io_manager  # noqa: E402  (all output goes through the input/output layer)
+import logic_manager  # noqa: E402
+
+# Show the AI layer's progress (INFO) while the script runs
+logging.basicConfig(level=logging.INFO)
 
 TOP_N_RESULTS = 10  # job listings in the final output
 OUTPUT_DIR = Path(__file__).resolve().parent / "output_results"  # src/ai_manager_test/output_results
@@ -95,40 +100,7 @@ def get_resume_file_path(data_root: str) -> str:
 
 
 # ==========================================
-# 2. RANKING  (stand-in for the logic manager)
-# ==========================================
-
-def select_top_jobs(profile: dict, jobs: list[dict], top_n: int = TOP_N_RESULTS) -> list[dict]:
-    """Returns the top_n jobs that best suit the candidate.
-
-    Jobs whose experience or education requirement the candidate misses rank below
-    those they meet; within each group, jobs are ordered by share of required skills
-    matched, then by number of skills matched.
-    """
-    # EDUCATION_LEVELS is ordered lowest to highest, so its index works as a level number
-    candidate_level = ai_manager.EDUCATION_LEVELS.index(profile["highest_qualification"])
-
-    # sorted() uses this to rank jobs. Python compares the returned tuples item by item,
-    # smallest first, so the earlier items matter most:
-    #   1. experience_gap   - 0 years short beats 2 years short
-    #   2. not education_ok - False (meets it) sorts before True (doesn't)
-    #   3. -match_ratio     - negative so a HIGHER ratio sorts FIRST
-    #   4. -matched         - tie-breaker: more matched skills first
-    def sort_key(job: dict):
-        experience_gap = max(0, job["min_years_experience"] - profile["years_of_experience"])
-        education_ok = (
-            job["min_education"] == "Not specified"
-            or ai_manager.EDUCATION_LEVELS.index(job["min_education"]) <= candidate_level
-        )
-        matched = len(job["matched_skills"])
-        match_ratio = matched / len(job["required_skills"]) if job["required_skills"] else 0
-        return (experience_gap, not education_ok, -match_ratio, -matched)
-
-    return sorted(jobs, key=sort_key)[:top_n]  # [:top_n] keeps only the first top_n
-
-
-# ==========================================
-# 3. OUTPUT FORMATTING AND SAVING  (stand-ins for display / the data manager)
+# 2. OUTPUT FORMATTING AND SAVING  (stand-ins for display / the data manager)
 # ==========================================
 
 def format_output(profile: dict, jobs: list[dict]) -> dict:
@@ -169,7 +141,7 @@ def save_output(output: dict) -> Path:
 
 
 # ==========================================
-# 4. TEST RUN
+# 3. TEST RUN
 # Uses the provider/model from .env (AI_PROVIDER / AI_MODEL).
 # ==========================================
 
@@ -180,10 +152,13 @@ if __name__ == "__main__":
         profile = ai_manager.extract_candidate_profile(resume_text)
         if profile is None:
             raise SystemExit("Could not extract candidate profile; see errors above.")
-        jobs = ai_manager.search_and_extract_jobs(profile)
+        listings = io_manager.fetch_listings(profile["search_keywords"], logic_manager.search_steps(None), None)
+        answers = ai_manager.extract_requirements_for_listings(listings, profile)
+        jobs = logic_manager.add_requirements(listings, answers, profile)
 
         # Rank, keep the top 10, convert to the required format, print and save
-        output = format_output(profile, select_top_jobs(profile, jobs))
+        # Rank with the app's own rule (logic_manager), so this output matches what users see
+        output = format_output(profile, logic_manager.select_top_jobs(profile, jobs, TOP_N_RESULTS))
         io_manager.display_message(json.dumps(output, indent=2))
         io_manager.display_message(f"\nSaved to {save_output(output)}")
     except KeyboardInterrupt:  # Ctrl+C

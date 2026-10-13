@@ -1,69 +1,35 @@
 """AI Manager: API interaction and response validation only.
 
-Turns unstructured text (resumes, job postings) into clean, validated records.
-All pass/fail decisions, scoring and filtering belong in logic_manager.
-Reading the resume file belongs to the input manager. To try this module on its
-own, run src/ai_manager_test/ai_manager_test.py.
-
-WHAT main.py AND web_app.py CALL
---------------------------------
-profile = extract_candidate_profile(resume_text)
-  resume_text: plain text of the resume (from the input manager)
-  profile:     candidate record (CANDIDATE_SCHEMA), or None if extraction failed
-jobs = search_and_extract_jobs(profile)
-  jobs:        list of job records (portal facts + AI-extracted requirements)
-Hand both to logic_manager.
-
-HOW THEY FLOW
--------------
-1. AI call #1: resume text -> candidate record             (sections 2-4, 6)
-      e.g. qualification, years of experience, skills, job titles to search for
-2. Search MyCareersFuture for each job title               (section 5)
-3. AI calls #2+: batches of 10 jobs -> job records         (sections 2-4, 6)
-      e.g. required skills, min education, which of your skills match, a reason
-
-Separately, tailor_resume(resume_text, job) rewrites a resume for one job (1 AI call),
-tailor_docx(paragraphs, resume_text, job) does it for a Word file by rewording its paragraphs
-in place (so the file keeps its layout), and fetch_job_details(job_url) gets that job's full
-description from the portal.
-
-EVERY AI CALL GOES THROUGH THE SAME FOUR STEPS (run_task)
----------------------------------------------------------
-build_prompt -> call_api -> parse_response -> validate_response
-  write the      send it,     turn the reply   check the JSON has the
-  instructions   get a reply  text into JSON   right keys, types and values
+Called by main.py and web_app.py: extract_candidate_profile, extract_requirements_for_listings,
+tailor_resume and tailor_docx. Every AI call goes through run_task:
+build_prompt -> call_api -> parse_response -> validate_response.
 """
 
 # --- Standard library (comes with Python) ---
-import html                                      # decode things like &amp; in job descriptions
 import json                                      # convert between JSON text and Python dicts
 import logging                                   # print INFO/WARNING/ERROR messages
 import os                                        # read environment variables, file paths
 import re                                        # regular expressions (text pattern matching)
 import time                                      # sleep() while waiting to retry
+from collections.abc import Callable             # type hints for functions passed as arguments
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait  # run several AI calls at the same time
 from datetime import date                        # today's date, so the AI can tell finished from ongoing studies
+from typing import Any, cast                     # type hints: any JSON value; a value whose type is known
 from pathlib import Path                         # nicer file path handling
 
 # --- Installed packages (see requirements.txt) ---
 import anthropic                  # official SDK for Claude
 import openai                     # official SDK for OpenAI (also works for Qwen and Gemini)
-import requests                   # plain HTTP requests (used for the job portal)
 from dotenv import load_dotenv    # loads the .env file into environment variables
 
-# Show INFO-level messages and above in the terminal
-logging.basicConfig(level=logging.INFO)
+# Logging is set up by the program that runs (main.py, web_app.py), not by this layer
 
 # Load .env from the project root (parent of src/), so os.getenv("QWEN_API_KEY") etc. work.
 # __file__ is this file's path; .parent.parent goes up from src/ai_manager.py to the project root.
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
-# Settings for each AI provider we support.
-# Pick a provider with AI_PROVIDER in .env; AI_MODEL overrides its default model.
-# "openai" SDK providers are called through the OpenAI client (Qwen and Gemini expose
-# OpenAI-compatible endpoints); Anthropic is called through its own SDK.
-# temperature=None means the parameter is left out (OpenAI's GPT-5 models only accept the default).
-# temperature=0.0 makes answers as consistent as possible between runs.
+# Settings for each AI provider (AI_PROVIDER and AI_MODEL in .env pick one).
+# temperature None leaves the parameter out; 0.0 keeps answers consistent between runs.
 PROVIDERS = {
     "qwen": {
         "label": "Alibaba Qwen",          # name shown to users, e.g. in the privacy notice
@@ -104,27 +70,12 @@ PROVIDER = DEFAULT_PROVIDER
 MODEL = PROVIDERS[PROVIDER]["default_model"]
 
 # --- Tunable settings ---
-JOBS_API_URL = "https://api.mycareersfuture.gov.sg/v2/search"
-JOB_DETAILS_API_URL = "https://api.mycareersfuture.gov.sg/v2/jobs/{job_id}"
-MAX_DESCRIPTION_CHARS = 2000   # job descriptions are cut to this length to keep prompts small
 JOB_BATCH_SIZE = 10            # jobs sent to the AI per call
-JOB_FETCH_ATTEMPTS = 3         # tries per job-portal search before giving up
 RATE_LIMIT_RETRIES = 3         # retries per AI call when the provider is busy
 MALFORMED_RESPONSE_RETRIES = 1 # extra tries when a reply isn't valid JSON or fails the schema check
 API_TIMEOUT_SECONDS = 90       # longest wait for one AI reply before it counts as a failed try
 MAX_RESUME_CHARS = 20000       # longer resume text is cut, so a huge file can't overflow the AI's input limit
 MAX_RATE_LIMIT_WAIT = 90  # longer suggested waits usually mean the daily quota is used up
-
-# MyCareersFuture's own search filters (checked against its search API). Job type and minimum
-# salary filter well; for work arrangement it only has "Telecommuting", the closest to Remote or
-# Hybrid. Maximum salary and years of experience can't be filtered there, so logic_manager does those.
-PORTAL_EMPLOYMENT_TYPES = {  # job type preference -> the portal's employment types (either one counts)
-    "Full Time": ["Full Time", "Permanent"],  # permanent jobs are full-time too
-    "Part Time": ["Part Time"],
-    "Contract": ["Contract"],
-    "Internship/Attachment": ["Internship/Attachment"],
-}
-PORTAL_TELECOMMUTING = 2  # id of "Telecommuting" in the portal's flexibleWorkArrangements filter
 
 # The API client object. Starts empty and is created the first time it's needed (_get_client).
 # The leading underscore is a Python convention meaning "internal, don't use from other files".
@@ -239,7 +190,7 @@ JOB_REQUIREMENTS_SCHEMA = {
         "certifications_required": STRING_LIST,
         "work_arrangement": {"type": "string", "enum": WORK_ARRANGEMENTS},
         # Each match must name the candidate skill behind it, e.g.
-        # {"job_skill": "React.js", "candidate_skill": "React"}, so we can check it (_ground_skill_matches)
+        # {"job_skill": "React.js", "candidate_skill": "React"}, so logic_manager can check it (add_requirements)
         "skill_matches": {
             "type": "array",
             "description": "Each required skill the candidate covers, with the candidate skill that covers it",
@@ -334,7 +285,7 @@ SKILL_EVIDENCE_SCHEMA = {
 }
 
 # A resume rewritten for one job (tailor_resume), keeping the resume's own sections, order and
-# headings. Checked against the original resume afterwards (_ground_tailored_resume), so
+# headings. Checked against the original resume afterwards (logic_manager.ground_tailored_resume), so
 # nothing the candidate didn't write gets through.
 TAILORED_RESUME_SCHEMA = {
     "type": "object",
@@ -351,7 +302,7 @@ TAILORED_RESUME_SCHEMA = {
 }
 
 # New wording for some paragraphs of a Word resume (tailor_docx). Only the wording changes:
-# the file keeps its own layout. Checked against the original afterwards (_ground_docx_edits).
+# the file keeps its own layout. Checked against the original afterwards (logic_manager.ground_docx_edits).
 DOCX_EDITS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -396,18 +347,10 @@ NON_EMPTY_LISTS = {"search_keywords"}  # we can't search for jobs without at lea
 # accuracy fixes live, e.g. "Internships do NOT count" or "Python does not cover C++".
 # ==========================================
 
-def build_prompt(record: dict, task: str) -> str:
-    """Constructs the prompt for a task from its input record.
-
-    candidate_profile: record = {"resume_text": str}
-    job_requirements:  record = {"jobs": list[dict], "candidate": dict (candidate record)}
-    tailored_resume:   record = {"resume_text": str, "job": dict (job record, with description if known)}
-    docx_edits:        record = {"paragraphs": list[dict] (io_manager.read_docx_paragraphs), "job": dict,
-                                 "use_keywords": list[str], "avoid_keywords": list[str] (_job_keywords)}
-    """
-    if task == "candidate_profile":
-        # f"""...""" is a multi-line f-string: {...} parts are replaced with values
-        return f"""Extract the candidate's details from this resume.
+def _candidate_profile_prompt(record: dict) -> str:
+    """AI call #1: the resume -> the candidate's profile. record = {"resume_text": str}"""
+    # f"""...""" is a multi-line f-string: {...} parts are replaced with values
+    return f"""Extract the candidate's details from this resume.
 
 RESUME:
 {record["resume_text"]}
@@ -430,22 +373,25 @@ RULES:
 
 Return JSON only."""
 
-    if task == "job_requirements":
-        # Number each job (### JOB 0, ### JOB 1, ...) so the AI can say which answer is for which job
-        job_blocks = []
-        for i, job in enumerate(record["jobs"]):
-            job_blocks.append(
-                f"### JOB {i}\n"
-                f"Title: {job.get('title')}\n"
-                f"Company: {job.get('company')}\n"
-                f"Minimum years of experience: {job.get('min_years_experience')}\n"
-                f"Listed skills: {', '.join(job.get('listed_skills', []))}\n"
-                f"Flexible work arrangements: {', '.join(job.get('flexible_work_arrangements', [])) or 'None'}\n"
-                f"Description: {job.get('description', '')}"
-            )
-        jobs_text = "\n\n".join(job_blocks)
-        candidate = record["candidate"]
-        return f"""Extract the requirements of each job posting below and compare them with the candidate.
+
+def _job_requirements_prompt(record: dict) -> str:
+    """AI call #2+: a batch of listings -> each one's requirements, compared with the candidate.
+    record = {"jobs": list[dict], "candidate": dict (candidate record)}"""
+    # Number each job (### JOB 0, ### JOB 1, ...) so the AI can say which answer is for which job
+    job_blocks = []
+    for i, job in enumerate(record["jobs"]):
+        job_blocks.append(
+            f"### JOB {i}\n"
+            f"Title: {job.get('title')}\n"
+            f"Company: {job.get('company')}\n"
+            f"Minimum years of experience: {job.get('min_years_experience')}\n"
+            f"Listed skills: {', '.join(job.get('listed_skills', []))}\n"
+            f"Flexible work arrangements: {', '.join(job.get('flexible_work_arrangements', [])) or 'None'}\n"
+            f"Description: {job.get('description', '')}"
+        )
+    jobs_text = "\n\n".join(job_blocks)
+    candidate = record["candidate"]
+    return f"""Extract the requirements of each job posting below and compare them with the candidate.
 Return one entry in "jobs" per JOB, with job_index set to that JOB's number.
 
 {jobs_text}
@@ -478,12 +424,15 @@ RULES (apply to each job separately):
 
 Return JSON only."""
 
-    if task == "tailored_resume":
-        job = record["job"]
-        # The skills the job card counted as matched, so the tailored resume keeps the same count
-        matched_skills = "\n".join(f'- {match["job_skill"]} (the candidate\'s "{match["candidate_skill"]}")'
-                                   for match in job.get("matched_skills", [])) or "None"
-        return f"""Rewrite this candidate's resume so it is tailored to the job below.
+
+def _tailored_resume_prompt(record: dict) -> str:
+    """Tailoring a PDF resume: rewrite it for one job.
+    record = {"resume_text": str, "job": dict (job record, with description if known)}"""
+    job = record["job"]
+    # The skills the job card counted as matched, so the tailored resume keeps the same count
+    matched_skills = "\n".join(f'- {match["job_skill"]} (the candidate\'s "{match["candidate_skill"]}")'
+                               for match in job.get("matched_skills", [])) or "None"
+    return f"""Rewrite this candidate's resume so it is tailored to the job below.
 
 JOB:
 Title: {job.get('title')}
@@ -529,20 +478,24 @@ RULES:
 
 Return JSON only."""
 
-    if task == "docx_edits":
-        job = record["job"]
-        matched_skills = "\n".join(f'- {match["job_skill"]} (the candidate\'s "{match["candidate_skill"]}")'
-                                   for match in job.get("matched_skills", [])) or "None"
-        # Paragraphs that may be reworded get a [number]; the rest are shown only so the AI has context
-        lines = []
-        for paragraph in record["paragraphs"]:
-            if paragraph["editable"]:
-                words = len(paragraph["text"].split())
-                lines.append(f"[{paragraph['id']}] ({paragraph['kind']}, {words} words) {paragraph['text']}")
-            else:
-                lines.append(f"    {paragraph['text']}")
-        resume_lines = "\n".join(lines)
-        return f"""Tailor this candidate's resume to the job below by rewording some of its paragraphs.
+
+def _docx_edits_prompt(record: dict) -> str:
+    """Tailoring a Word resume: new wording for some of its paragraphs.
+    record = {"paragraphs": list[dict] (io_manager.read_docx_paragraphs), "job": dict,
+              "use_keywords": list[str], "avoid_keywords": list[str] (logic_manager.job_keywords)}"""
+    job = record["job"]
+    matched_skills = "\n".join(f'- {match["job_skill"]} (the candidate\'s "{match["candidate_skill"]}")'
+                               for match in job.get("matched_skills", [])) or "None"
+    # Paragraphs that may be reworded get a [number]; the rest are shown only so the AI has context
+    lines = []
+    for paragraph in record["paragraphs"]:
+        if paragraph["editable"]:
+            words = len(paragraph["text"].split())
+            lines.append(f"[{paragraph['id']}] ({paragraph['kind']}, {words} words) {paragraph['text']}")
+        else:
+            lines.append(f"    {paragraph['text']}")
+    resume_lines = "\n".join(lines)
+    return f"""Tailor this candidate's resume to the job below by rewording some of its paragraphs.
 The resume's layout, headings, section order, titles, dates and skills lists stay exactly as they are:
 you can only change the paragraphs marked with a [number].
 
@@ -590,7 +543,21 @@ RULES:
 
 Return JSON only."""
 
-    raise ValueError(f"Unknown task: {task}")
+
+# Which function writes the prompt for each kind of AI call (the keys of TASKS)
+PROMPT_BUILDERS = {
+    "candidate_profile": _candidate_profile_prompt,
+    "job_requirements": _job_requirements_prompt,
+    "tailored_resume": _tailored_resume_prompt,
+    "docx_edits": _docx_edits_prompt,
+}
+
+
+def build_prompt(record: dict, task: str) -> str:
+    """Constructs the prompt for a task from its input record."""
+    if task not in PROMPT_BUILDERS:
+        raise ValueError(f"Unknown task: {task}")
+    return PROMPT_BUILDERS[task](record)
 
 
 # ==========================================
@@ -652,7 +619,7 @@ def call_api(prompt: str, task: str) -> str | None:
     for attempt in attempts:
         result = _with_retries(attempt, task)
         if result is not _FORMAT_REJECTED:
-            return result  # either the reply text, or None if it failed for another reason
+            return cast(str | None, result)  # either the reply text, or None if it failed for another reason
 
     logging.error(f"[{task}] All response formats were rejected.")
     return None
@@ -716,7 +683,7 @@ def _anthropic_request(client: anthropic.Anthropic, prompt: str, task: str) -> s
     return next((block.text for block in response.content if block.type == "text"), None)
 
 
-def _with_retries(request, task: str):
+def _with_retries(request: Callable[[], str | None], task: str) -> str | None | object:
     """Runs one request function, retrying temporary failures.
 
     Returns the response text, None on failure, or _FORMAT_REJECTED on HTTP 400
@@ -811,74 +778,82 @@ def parse_response(raw: str | None) -> dict | None:
     return data
 
 
-def _validate_value(value, spec: dict, name: str, path: str):
-    """Validates one value against its schema spec and returns the cleaned value.
-    Raises ValueError describing the first problem found.
-
-    This function is recursive: for a list or object it calls itself on each item/field,
-    so one function can check the whole nested structure. "path" tracks where we are
-    (e.g. "job_requirements.jobs[3].min_education") so error messages point to the problem.
-    """
+def _validate_value(value: Any, spec: dict, name: str, path: str) -> Any:
+    """Validates one value against its schema (recursively) and returns the cleaned value; raises ValueError
+    for the first problem. path says where it is, e.g. "job_requirements.jobs[3].min_education"."""
     expected = spec["type"]
-
     if expected == "string":
-        if not isinstance(value, str):
-            raise ValueError(f"{path} should be a string, got {value!r}")
-        value = value.strip()
-        if "enum" in spec:
-            # Match the allowed option ignoring case, e.g. "diploma" -> "Diploma", "PhD" -> None
-            matched = {option.lower(): option for option in spec["enum"]}.get(value.lower())
-            if matched is None:
-                raise ValueError(f"{path}={value!r} is not one of {spec['enum']}")
-            value = matched
-        return value
-
+        return _validate_string(value, spec, path)
     if expected in ("integer", "number"):
-        # bool is checked separately because in Python True/False count as integers
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{path} should be a number, got {value!r}")
-        if expected == "integer":
-            if value != int(value):
-                raise ValueError(f"{path} should be a whole number, got {value!r}")
-            value = int(value)
-        if name in NUMERIC_RANGES:
-            low, high = NUMERIC_RANGES[name]
-            if not low <= value <= high:
-                raise ValueError(f"{path}={value} is outside {low}-{high}")
-        return value
-
+        return _validate_number(value, expected, name, path)
     if expected == "array":
-        if not isinstance(value, list):
-            raise ValueError(f"{path} should be a list, got {value!r}")
-        item_spec = spec["items"]
-        cleaned = []
-        for i, item in enumerate(value):
-            try:
-                cleaned.append(_validate_value(item, item_spec, name, f"{path}[{i}]"))
-            except ValueError as e:
-                if item_spec["type"] != "object":
-                    raise
-                # One bad entry in a list of records shouldn't sink the rest
-                # (e.g. one malformed job in a batch of 10 is dropped; the other 9 are kept)
-                logging.warning(f"Dropping malformed entry: {e}")
-        if item_spec["type"] == "string":
-            cleaned = [v for v in cleaned if v]  # drop empty strings
-        if name in NON_EMPTY_LISTS and not cleaned:
-            raise ValueError(f"{path} must not be empty")
-        return cleaned
-
+        return _validate_list(value, spec, name, path)
     if expected == "object":
-        if not isinstance(value, dict):
-            raise ValueError(f"{path} should be an object, got {value!r}")
-        cleaned = {}
-        # Only required keys are copied over, so any extra keys the AI added are dropped
-        for key in spec["required"]:
-            if key not in value:
-                raise ValueError(f"{path}.{key} is missing")
-            cleaned[key] = _validate_value(value[key], spec["properties"][key], key, f"{path}.{key}")
-        return cleaned
-
+        return _validate_object(value, spec, path)
     raise ValueError(f"{path} has unsupported schema type {expected!r}")
+
+
+def _validate_string(value: Any, spec: dict, path: str) -> str:
+    """A string, trimmed; an allowed option ("enum") is matched ignoring case, e.g. "diploma" -> "Diploma"."""
+    if not isinstance(value, str):
+        raise ValueError(f"{path} should be a string, got {value!r}")
+    value = value.strip()
+    if "enum" in spec:
+        matched = {option.lower(): option for option in spec["enum"]}.get(value.lower())
+        if matched is None:
+            raise ValueError(f"{path}={value!r} is not one of {spec['enum']}")
+        value = matched
+    return value
+
+
+def _validate_number(value: Any, expected: str, name: str, path: str) -> int | float:
+    """A number (a whole one for "integer"), inside its NUMERIC_RANGES range if it has one."""
+    # bool is checked separately because in Python True/False count as integers
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{path} should be a number, got {value!r}")
+    if expected == "integer":
+        if value != int(value):
+            raise ValueError(f"{path} should be a whole number, got {value!r}")
+        value = int(value)
+    if name in NUMERIC_RANGES:
+        low, high = NUMERIC_RANGES[name]
+        if not low <= value <= high:
+            raise ValueError(f"{path}={value} is outside {low}-{high}")
+    return value
+
+
+def _validate_list(value: Any, spec: dict, name: str, path: str) -> list:
+    """A list, each item checked; a bad record is dropped on its own, empty strings are dropped."""
+    if not isinstance(value, list):
+        raise ValueError(f"{path} should be a list, got {value!r}")
+    item_spec = spec["items"]
+    cleaned = []
+    for index, item in enumerate(value):
+        try:
+            cleaned.append(_validate_value(item, item_spec, name, f"{path}[{index}]"))
+        except ValueError as error:
+            if item_spec["type"] != "object":
+                raise
+            # One bad entry in a list of records shouldn't sink the rest
+            # (e.g. one malformed job in a batch of 10 is dropped; the other 9 are kept)
+            logging.warning(f"Dropping malformed entry: {error}")
+    if item_spec["type"] == "string":
+        cleaned = [text for text in cleaned if text]  # drop empty strings
+    if name in NON_EMPTY_LISTS and not cleaned:
+        raise ValueError(f"{path} must not be empty")
+    return cleaned
+
+
+def _validate_object(value: Any, spec: dict, path: str) -> dict:
+    """An object with every required key, each value checked; keys the AI added are dropped."""
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should be an object, got {value!r}")
+    cleaned = {}
+    for key in spec["required"]:
+        if key not in value:
+            raise ValueError(f"{path}.{key} is missing")
+        cleaned[key] = _validate_value(value[key], spec["properties"][key], key, f"{path}.{key}")
+    return cleaned
 
 
 def validate_response(data: dict, task: str) -> dict | None:
@@ -917,107 +892,10 @@ def run_task(record: dict, task: str) -> dict | None:
 
 
 # ==========================================
-# 5. JOB PORTAL FETCH
-# Gets real job listings from MyCareersFuture (no AI involved here).
-# ==========================================
-
-def _clean_html(text: str) -> str:
-    """Strips HTML tags and collapses whitespace."""
-    # Job descriptions arrive as HTML, e.g. "<p>We are <strong>hiring</strong></p>" -> "We are hiring"
-    text = html.unescape(re.sub(r"<[^>]+>", " ", text or ""))
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def fetch_jobs(search_query: str, limit: int = 10, portal_filters: dict | None = None) -> list[dict] | None:
-    """Fetches job listings from MyCareersFuture. portal_filters are the portal's own search
-    filters (from _search_steps), e.g. {"employmentTypes": ["Internship/Attachment"]}.
-    Retries timeouts, server errors and replies in an unexpected format. Returns the listings
-    ([] if the portal has none), or None if every attempt failed, so a caller can tell
-    "nothing listed" from "the portal isn't working". A single listing in an unexpected
-    format is skipped, not fatal."""
-    raw_jobs = None
-    for attempt in range(1, JOB_FETCH_ATTEMPTS + 1):
-        try:
-            # The portal reads the search words and filters from the JSON body; in the URL they are ignored
-            resp = requests.post(JOBS_API_URL, params={"limit": limit},
-                                 json={"search": search_query, **(portal_filters or {})}, timeout=20)
-            resp.raise_for_status()  # turns HTTP errors (e.g. 500) into exceptions
-            data = resp.json()
-            raw_jobs = data.get("results") if isinstance(data, dict) else None
-            if not isinstance(raw_jobs, list):
-                raise ValueError(f"unexpected reply format ({type(data).__name__})")
-            break  # success - stop retrying
-        except (requests.RequestException, ValueError) as error:
-            if attempt == JOB_FETCH_ATTEMPTS:
-                logging.error(f"Job search for '{search_query}' failed after {attempt} attempts: {error}")
-                return None
-            logging.warning(f"Job search for '{search_query}' failed ({type(error).__name__}); retrying...")
-            time.sleep(2 * attempt)  # wait a little longer each time: 2s, then 4s
-
-    jobs = []
-    for job in raw_jobs:
-        try:
-            jobs.append(_listing_from_portal(job))
-        except (AttributeError, KeyError, TypeError) as error:
-            logging.warning(f"Skipped a '{search_query}' listing in an unexpected format "
-                            f"({type(error).__name__}: {error})")
-    return jobs
-
-
-def _listing_from_portal(job: dict) -> dict:
-    """One portal listing as a job record with simple names. Raises AttributeError, KeyError
-    or TypeError if the listing isn't in the expected format."""
-    # The portal returns lots of nested data; keep only the fields we use, with simple names.
-    # "x.get(key) or {}" means: use the value if present, otherwise an empty dict, so missing
-    # data doesn't crash the program.
-    company = (job.get("hiringCompany") or job.get("postedCompany") or {}).get("name")
-    salary = job.get("salary") or {}
-    districts = (job.get("address") or {}).get("districts") or []
-    return {
-        "title": job.get("title", "N/A"),
-        "company": company or "N/A",
-        "location": districts[0]["location"] if districts else "Singapore",
-        "min_salary": salary.get("minimum", 0),
-        "max_salary": salary.get("maximum", 0),
-        "salary_period": ((salary.get("type") or {}).get("salaryType") or "Monthly").lower(),
-        "employment_types": [employment["employmentType"] for employment in job.get("employmentTypes", [])],
-        "position_levels": [level["position"] for level in job.get("positionLevels", [])],
-        "min_years_experience": job.get("minimumYearsExperience") or 0,
-        "flexible_work_arrangements": [
-            arrangement["flexibleWorkArrangement"] for arrangement in job.get("flexibleWorkArrangements") or []
-        ],
-        "listed_skills": [skill["skill"] for skill in job.get("skills", [])],
-        "description": _clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
-        "job_url": (job.get("metadata") or {}).get("jobDetailsUrl", "N/A"),
-    }
-
-
-def fetch_job_details(job_url: str) -> dict | None:
-    """Gets one job's full description from MyCareersFuture, using the id at the end of its link.
-    Returns {"description", "listed_skills", "is_open"}, or None if it can't be fetched."""
-    # e.g. ".../job/it/data-analyst-acme-5365191b6ddd018b70f7b8149c0a20ca" -> "5365191b...20ca"
-    match = re.search(r"([0-9a-f]{32})/?(?:\?.*)?$", job_url or "")
-    if not match:
-        return None
-    try:
-        resp = requests.get(JOB_DETAILS_API_URL.format(job_id=match.group(1)), timeout=20)
-        resp.raise_for_status()
-        job = resp.json()
-    except (requests.RequestException, ValueError) as e:
-        logging.warning(f"Could not fetch job details for {job_url} ({type(e).__name__})")
-        return None
-    return {
-        "description": _clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
-        "listed_skills": [s["skill"] for s in job.get("skills", [])],
-        "is_open": ((job.get("status") or {}).get("jobStatus") or "Open") == "Open",
-    }
-
-
-# ==========================================
-# 6. PUBLIC FUNCTIONS FOR OTHER MODULES
-# These tie sections 1-5 together. Other files (main.py, and the scripts in
+# 5. PUBLIC FUNCTIONS FOR OTHER MODULES
+# These tie sections 1-4 together. Other files (main.py, and the scripts in
 # src/ai_manager_test/) should call these rather than the lower-level functions above.
-# main.py and web_app.py need extract_candidate_profile and search_and_extract_jobs.
+# main.py and web_app.py need extract_candidate_profile and extract_requirements_for_listings.
 # ==========================================
 
 def _capped_resume(resume_text: str) -> str:
@@ -1028,152 +906,43 @@ def _capped_resume(resume_text: str) -> str:
 
 
 def extract_candidate_profile(resume_text: str) -> dict | None:
-    """Returns a validated candidate record (see CANDIDATE_SCHEMA), or None."""
+    """AI call: the resume -> a validated candidate record (see CANDIDATE_SCHEMA), or None."""
     return run_task({"resume_text": _capped_resume(resume_text)}, "candidate_profile")
 
 
-def _ground_skill_matches(requirements: dict, candidate_skills: list[str]) -> dict:
-    """Keeps only skill matches that point at a real candidate skill and a real
-    required skill, then derives matched_skills and missing_skills from them.
-
-    This is the anti-hallucination check: if the AI claims "C++ <- Rust" but the
-    candidate has no "Rust" skill, the match is thrown away and C++ counts as missing.
-    """
-    known_candidate = {s.lower() for s in candidate_skills}       # a set, for fast "in" checks
-    required = requirements["required_skills"]
-    required_lookup = {s.lower(): s for s in required}             # lowercase -> original spelling
-
-    matches = {}
-    # .pop() removes skill_matches from the dict and returns it; it's replaced below
-    for m in requirements.pop("skill_matches"):
-        job_skill = required_lookup.get(m["job_skill"].lower())
-        if job_skill and m["candidate_skill"].lower() in known_candidate:
-            matches.setdefault(job_skill, m["candidate_skill"])   # keep the first match per job skill
-
-    requirements["matched_skills"] = [{"job_skill": j, "candidate_skill": c} for j, c in matches.items()]
-    requirements["missing_skills"] = [s for s in required if s not in matches]
-    return requirements
-
-
-def extract_job_requirements(jobs: list[dict], profile: dict) -> list[dict]:
-    """Extracts requirements for a batch of job listings in one AI call.
-
-    Returns each listing merged with its requirements. Listings the model skipped
-    or returned malformed are left out. Descriptions are dropped to keep records small.
-    """
+def extract_job_requirements(jobs: list[dict], profile: dict) -> list[dict | None]:
+    """AI call for one batch of listings. Returns one validated answer per listing, None where the AI gave none."""
+    answers: list[dict | None] = [None] * len(jobs)
     result = run_task({"jobs": jobs, "candidate": profile}, "job_requirements")
     if result is None:
         logging.warning(f"Could not extract requirements for a batch of {len(jobs)} jobs.")
-        return []
+        return answers
 
-    # Match each AI answer back to its job using job_index (the "### JOB n" number in the prompt)
-    by_index = {}
+    # Match each AI answer to its job by job_index (the "### JOB n" number in the prompt)
     for requirements in result["jobs"]:
-        index = requirements.pop("job_index")
-        if index < len(jobs):
-            by_index.setdefault(index, requirements)
-
-    records = []
-    for i, job in enumerate(jobs):
-        if i not in by_index:
+        job_index = requirements.pop("job_index")
+        if job_index < len(jobs) and answers[job_index] is None:
+            answers[job_index] = requirements
+    for job_index, job in enumerate(jobs):
+        if answers[job_index] is None:
             logging.warning(f"No requirements returned for: {job.get('title')}")
-            continue
-        listing = {k: v for k, v in job.items() if k != "description"}
-        # {**a, **b} merges two dicts: the portal's facts + the AI's extracted requirements
-        records.append({**listing, **_ground_skill_matches(by_index[i], profile["core_skills"])})
-    return records
+    return answers
 
 
-def _search_steps(preferences: dict | None) -> list[tuple[str, dict]]:
-    """The portal searches to try, most specific first, as [(step, portal filters)]:
-      "all":      every preference the portal can filter (job type, minimum salary, telecommuting
-                  for Remote or Hybrid)
-      "job type": the job type only (left out when the job type is "Any")
-      "general":  no filters
-    Two steps can search the portal the same way but keep different listings, e.g. when only the
-    maximum salary is set: the caller's fits check (search_and_extract_jobs) keeps fewer at "all".
-    preferences: the user's filters (io_manager.prompt_filters), or None."""
-    preferences = preferences or {}
-    job_type = {}
-    if preferences.get("job_type") in PORTAL_EMPLOYMENT_TYPES:
-        job_type = {"employmentTypes": PORTAL_EMPLOYMENT_TYPES[preferences["job_type"]]}
-    everything = dict(job_type)
-    if preferences.get("min_salary"):
-        everything["salary"] = preferences["min_salary"]
-    if preferences.get("work_arrangement") in ("Remote", "Hybrid"):
-        everything["flexibleWorkArrangements"] = [PORTAL_TELECOMMUTING]
-
-    steps = [("all", everything)]
-    if job_type:
-        steps.append(("job type", job_type))
-    steps.append(("general", {}))
-    return steps
-
-
-def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_workers: int = 5,
-                            on_progress=None, summary: dict | None = None,
-                            preferences: dict | None = None, fits=None) -> list[dict]:
-    """Searches the job portal with the profile's keywords and extracts each
-    listing's requirements. Listings are de-duplicated by URL and sent to the AI
-    in batches of JOB_BATCH_SIZE, with batches running in parallel.
-
-    preferences (optional): the user's filters (io_manager.prompt_filters). The portal is searched
-    with the ones it can filter (_search_steps).
-    fits (optional): fits(job, step) -> True if a listing, as the portal gives it, meets the
-    preferences that step keeps, e.g. the maximum salary, which the portal can't filter. Only
-    listings that fit are sent to the AI.
-    If no listings come back, or none fit, it tries again with the job type only, then with no
-    preferences. The step used goes in summary["search_step"], so the caller can tell the user and
-    keep only the preferences that still apply (io_manager.filters_for_step). It doesn't step down
-    when the portal itself fails: fewer filters wouldn't help.
-
-    on_progress (optional) lets a UI show progress. It is called as
-    on_progress(stage, done, total): stage "search" after each portal search,
-    "analyse" after each AI batch finishes.
-
-    summary (optional): a dict this fills in, so the caller can tell the user what happened:
-    {"search_step", "searches_failed", "listings_found", "batches_failed", "listings_analysed"}.
-    A batch that fails is left out and counted; the other batches are still returned.
-    """
+def extract_requirements_for_listings(listings: list[dict], profile: dict, max_workers: int = 5,
+                                      on_progress: Callable[[str, int, int], None] | None = None,
+                                      summary: dict | None = None) -> list[dict | None]:
+    """AI calls for every listing, in parallel batches. Returns one answer per listing, in the same order
+    (None where the AI gave none); logic_manager.add_requirements turns them into job records."""
     if summary is None:
         summary = {}
-    keywords = profile["search_keywords"]
-    fetched = {}  # (keyword, portal filters) -> listings, so a step that searches the same way doesn't search again
-    for step, portal_filters in _search_steps(preferences):
-        # A dict keyed by URL removes duplicates: the same job found by two searches is kept once
-        unique_jobs = {}
-        portal_failed = False
-        summary["search_step"] = step
-        summary["searches_failed"] = 0
-        for done, keyword in enumerate(keywords, start=1):
-            key = (keyword, repr(sorted(portal_filters.items())))
-            if key not in fetched:
-                logging.info(f"Searching portal for '{keyword}' ({step} search filters: {portal_filters})...")
-                fetched[key] = fetch_jobs(keyword, limit=limit_per_search, portal_filters=portal_filters)
-            found = fetched[key]
-            if not found:
-                summary["searches_failed"] += 1  # failed, or nothing listed under that title
-            portal_failed = portal_failed or found is None
-            for job in found or []:
-                if job["job_url"] != "N/A" and (fits is None or fits(job, step)):
-                    unique_jobs.setdefault(job["job_url"], job)
-            if on_progress:
-                on_progress("search", done, len(keywords))
-        if unique_jobs or portal_failed:
-            break
-        logging.info(f"No listings fit the '{step}' preferences; trying with fewer preferences.")
 
     # Split into batches of 10, e.g. 40 jobs -> [jobs 0-9, 10-19, 20-29, 30-39]
-    jobs = list(unique_jobs.values())
-    batches = [jobs[start:start + JOB_BATCH_SIZE] for start in range(0, len(jobs), JOB_BATCH_SIZE)]
-    summary["listings_found"] = len(jobs)
+    batches = [listings[start:start + JOB_BATCH_SIZE] for start in range(0, len(listings), JOB_BATCH_SIZE)]
     summary["batches_failed"] = 0
-    logging.info(f"Extracting requirements for {len(jobs)} unique listings in {len(batches)} batches...")
+    logging.info(f"Extracting requirements for {len(listings)} unique listings in {len(batches)} batches...")
 
-    # Send up to 5 batches to the AI at the same time instead of one after another.
-    # Progress is reported as each batch finishes; the results are then read back in the original
-    # batch order. Waiting in short slices (not one long wait) lets Ctrl+C stop the search right away:
-    # on Windows, Python can't react to Ctrl+C in the middle of a wait with no time limit.
+    # Send up to 5 batches at once; wait in 0.5 s slices so Ctrl+C works on Windows
     pool = ThreadPoolExecutor(max_workers=max_workers)
     try:
         futures = [pool.submit(extract_job_requirements, batch, profile) for batch in batches]
@@ -1185,223 +954,34 @@ def search_and_extract_jobs(profile: dict, limit_per_search: int = 10, max_worke
                 done += 1
                 if on_progress:
                     on_progress("analyse", done, len(batches))
-        records = []
+        answers: list[dict | None] = []
         for batch, future in zip(batches, futures):
             try:
-                records.extend(future.result())
+                answers.extend(future.result())
             except Exception as error:
                 # An unexpected error in one batch loses only that batch's listings
                 summary["batches_failed"] += 1
+                answers.extend([None] * len(batch))
                 logging.error(f"A batch of {len(batch)} listings failed ({type(error).__name__}: {error}); skipping it.")
     except BaseException:
         # Ctrl+C or a cancelled search: don't start the queued batches, and don't wait for the running ones
         pool.shutdown(wait=False, cancel_futures=True)
         raise
     pool.shutdown(wait=True)
-    summary["listings_analysed"] = len(records)
-    return records
-
-
-def _normalise(text: str) -> str:
-    """Lowercase, one kind of dash, single spaces: "Jan 2024 – Present" and "jan 2024 - present" match."""
-    text = re.sub(r"[‐-―−]", "-", text.lower())
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _numbers_in(text: str) -> set[str]:
-    """Every whole number, without commas: "2,000 users, 15%" -> {"2000", "15"}."""
-    return {number.replace(",", "") for number in re.findall(r"\d+(?:[.,]\d+)*", text)}
-
-
-def _appears_in(text: str, source: str) -> bool:
-    """True if text is in source (already _normalise'd) as whole words:
-    "SQL" is found in "SQL, Excel", but "Java" is not found in "JavaScript"."""
-    return re.search(rf"(?<!\w){re.escape(_normalise(text))}(?!\w)", source) is not None
-
-
-def _ground_tailored_resume(tailored: dict, resume_text: str) -> tuple[dict, list[str], list[str]]:
-    """The anti-hallucination check for tailor_resume: removes anything the original resume
-    doesn't contain. Returns (resume, skills removed, notes about other removals).
-
-    Name, contact details, skills, skill group labels, organisations, subtitles and dates must
-    appear in the resume text as whole words (so a skill "C" is not "found" inside "Excel").
-    Text sections (e.g. a profile) and bullets may be reworded, but every number in them
-    (e.g. "30%", "2,000") must be a whole number in the resume (so "15" is not "found" inside
-    a phone number). A section left with nothing in it is dropped.
-    Known limit: a real number reused for a different claim still passes, e.g. "2 dashboards"
-    when the resume only says "2-week sprint".
-    """
-    source = _normalise(resume_text)
-    source_numbers = _numbers_in(source)
-
-    def found(text: str) -> bool:
-        return _appears_in(text, source)
-
-    def numbers_found(text: str) -> bool:
-        return _numbers_in(text) <= source_numbers  # <= on sets: every number is in the resume
-
-    notes = []
-    if tailored["name"] and not found(tailored["name"]):
-        tailored["name"] = ""
-    # Keep the resume's own separator, e.g. "Singapore | +65 9000 0000" stays with " | "
-    pieces = re.split(r"(\s*[·|•]\s*)", tailored["contact"])
-    separator = pieces[1] if len(pieces) > 1 else " · "
-    tailored["contact"] = separator.join(part for part in pieces[0::2] if part.strip() and found(part))
-
-    removed_skills = []
-    for section in tailored["sections"]:
-        if section["kind"] == "text" and not numbers_found(section["text"]):
-            notes.append(f'The "{section["heading"]}" section was left out because it had a number '
-                         f"that isn't in your resume.")
-            section["text"] = ""
-
-        for group in section["skill_groups"]:
-            if group["label"] and not found(group["label"]):
-                group["label"] = ""
-            removed_skills += [skill for skill in group["skills"] if not found(skill)]
-            group["skills"] = [skill for skill in group["skills"] if found(skill)]
-        section["skill_groups"] = [group for group in section["skill_groups"] if group["skills"]]
-
-        kept = []
-        for entry in section["entries"]:
-            where = entry["organisation"] or entry["title"]
-            if not where or not found(where):
-                notes.append(f'Left out "{entry["title"] or entry["organisation"]}": it isn\'t in your resume.')
-                continue
-            if entry["subtitle"] and not found(entry["subtitle"]):
-                entry["subtitle"] = ""
-            if entry["dates"] and not found(entry["dates"]):
-                entry["dates"] = ""
-            bullets = [bullet for bullet in entry["bullets"] if numbers_found(bullet)]
-            dropped = len(entry["bullets"]) - len(bullets)
-            if dropped:
-                notes.append(f'Left out {dropped} point(s) under "{entry["title"]}" with numbers that '
-                             f"aren't in your resume.")
-            entry["bullets"] = bullets
-            kept.append(entry)
-        section["entries"] = kept
-    tailored["sections"] = [section for section in tailored["sections"]
-                            if section["text"] or section["skill_groups"] or section["entries"]]
-    return tailored, removed_skills, notes
+    summary["listings_analysed"] = sum(answer is not None for answer in answers)
+    return answers
 
 
 def tailor_resume(resume_text: str, job: dict) -> dict | None:
-    """Rewrites a resume for one job (1 AI call), keeping only facts from the original.
-    job is a job record, ideally with "description" from fetch_job_details.
-    Returns {"resume": TAILORED_RESUME_SCHEMA record, "removed_skills", "notes", "skill_evidence"},
-    or None. skill_evidence is not checked here: logic_manager.skills_shown checks each quote."""
-    result = run_task({"resume_text": _capped_resume(resume_text), "job": job}, "tailored_resume")
-    if result is None:
-        return None
-    skill_evidence = result.pop("skill_evidence")
-    resume, removed_skills, notes = _ground_tailored_resume(result, resume_text)
-    return {"resume": resume, "removed_skills": removed_skills, "notes": notes, "skill_evidence": skill_evidence}
+    """AI call: a PDF resume rewritten for one job. Returns the validated reply (name, contact, sections,
+    changes, skill_evidence), or None. logic_manager.ground_tailored_resume checks it against the original."""
+    return run_task({"resume_text": _capped_resume(resume_text), "job": job}, "tailored_resume")
 
 
-def _job_keywords(job: dict, resume_text: str) -> tuple[list[str], list[str]]:
-    """Splits a job's skills into (ones the resume shows, ones it doesn't), for tailor_docx.
-    A skill counts as shown if it is in the resume, or if the job analysis matched it to one of the
-    candidate's skills (e.g. "Business Data Analysis" matched by "Data Analysis")."""
-    source = _normalise(resume_text)
-    matched = {match["job_skill"].lower() for match in job.get("matched_skills", [])}
-    use, avoid = [], []
-    for skill in dict.fromkeys([*job.get("required_skills", []), *job.get("listed_skills", [])]):
-        if skill.lower() in matched or _appears_in(skill, source):
-            use.append(skill)
-        else:
-            avoid.append(skill)
-    return use, avoid
-
-
-def _ground_docx_edits(edits: list[dict], paragraphs: list[dict], resume_text: str,
-                       avoid_keywords: list[str]) -> tuple[dict, list[str], list[str]]:
-    """The anti-hallucination check for tailor_docx: keeps only rewrites that add nothing new.
-    Returns ({paragraph id: new text}, skills removed, notes about rewrites that were not used).
-
-    A rewrite is used only if its paragraph may be edited, every number in it is in the resume,
-    it uses none of the job keywords the resume doesn't show (_job_keywords), and the resume still
-    has no more lines than before, so it keeps its number of pages. "" (remove) is
-    only allowed for bullets, and never for every bullet in a group (e.g. all the points under one job).
-    """
-    source = _normalise(resume_text)
-    source_numbers = _numbers_in(source)
-    editable = {paragraph["id"]: paragraph for paragraph in paragraphs if paragraph["editable"]}
-
-    kept, removed_skills, notes = {}, [], []
-    for edit in edits:
-        paragraph = editable.get(edit["paragraph"])
-        if paragraph is None or edit["paragraph"] in kept or edit["text"] == paragraph["text"]:
-            continue  # not a paragraph that may change, already changed, or unchanged
-        start = f'"{paragraph["text"][:50]}..."'
-        if edit["text"] == "":
-            if paragraph["kind"] == "bullet":
-                kept[edit["paragraph"]] = ""
-            continue
-        if not _numbers_in(edit["text"]) <= source_numbers:
-            notes.append(f"Kept {start} as it was: the new wording had a number that isn't in your resume.")
-            continue
-        new_text = _normalise(edit["text"])
-        added = [skill for skill in avoid_keywords if _appears_in(skill, new_text)]
-        if added:
-            removed_skills += added
-            notes.append(f"Kept {start} as it was: the new wording added {', '.join(added)}, "
-                         f"which isn't in your resume.")
-            continue
-        kept[edit["paragraph"]] = edit["text"]
-
-    # Bullets next to each other form a group, e.g. the points under one job. If all of a group's
-    # bullets would be removed, keep them all, so no job or section is left empty.
-    groups, current, above = [], [], ""
-    for paragraph in paragraphs:
-        if paragraph["kind"] == "bullet":
-            current.append(paragraph["id"])
-            continue
-        if current:
-            groups.append((above, current))
-            current = []
-        above = paragraph["text"].split("\t")[0]
-    if current:
-        groups.append((above, current))
-    for above, ids in groups:
-        if all(kept.get(paragraph_id) == "" for paragraph_id in ids):
-            for paragraph_id in ids:
-                del kept[paragraph_id]
-            notes.append(f'Kept every point under "{above}": removing them all would leave it empty.')
-
-    # Number of pages: the file keeps its fonts and layout, so it keeps its pages if it has no more
-    # lines than before. A rewrite that needs extra lines may use the lines freed by removed or
-    # shortened paragraphs. Estimates lean the safe way: originals are counted with lines a little
-    # wider than chars_per_line (so fewer lines are freed), new wording a little narrower (more lines).
-    def lines(text: str, paragraph: dict, width: float) -> int:
-        return -(-len(text) // max(1, int(paragraph["chars_per_line"] * width)))  # rounds up
-
-    spare, longer = 0, []
-    for paragraph_id, text in kept.items():
-        paragraph = editable[paragraph_id]
-        if len(text) <= len(paragraph["text"]):
-            # Same font and width, so no longer means no more lines; count what it surely frees
-            spare += max(0, lines(paragraph["text"], paragraph, 1.15) - lines(text, paragraph, 0.9))
-        else:
-            longer.append(paragraph_id)
-    for paragraph_id in longer:
-        paragraph = editable[paragraph_id]
-        extra = max(0, lines(kept[paragraph_id], paragraph, 0.9) - lines(paragraph["text"], paragraph, 1.15))
-        if extra <= spare:
-            spare -= extra
-        else:
-            del kept[paragraph_id]
-            notes.append(f'Kept "{paragraph["text"][:50]}..." as it was: the new wording was longer and '
-                         f"could push your resume onto another page.")
-    return kept, list(dict.fromkeys(removed_skills)), notes
-
-
-def tailor_docx(paragraphs: list[dict], resume_text: str, job: dict) -> dict | None:
-    """Tailors a Word resume in place (1 AI call): rewords some paragraphs and keeps the rest,
-    so the file keeps its own layout. paragraphs come from io_manager.read_docx_paragraphs, and
-    job is a job record, ideally with "description" from fetch_job_details.
-    Returns {"edits": {paragraph id: new text, "" removes that bullet}, "changes", "removed_skills",
-    "notes", "skill_evidence"}, or None. io_manager.write_edited_docx applies the edits to a copy of
-    the file. skill_evidence is not checked here: logic_manager.skills_shown checks each quote."""
+def tailor_docx(paragraphs: list[dict], job: dict, use_keywords: list[str],
+                avoid_keywords: list[str]) -> dict | None:
+    """AI call: new wording for some paragraphs of a Word resume. Returns the validated reply (edits,
+    skill_evidence) plus the paragraphs it was sent, or None. logic_manager.ground_docx_edits checks it."""
     # Like _capped_resume: stop adding paragraphs once MAX_RESUME_CHARS is reached
     capped, length = [], 0
     for paragraph in paragraphs:
@@ -1411,25 +991,8 @@ def tailor_docx(paragraphs: list[dict], resume_text: str, job: dict) -> dict | N
             break
         capped.append(paragraph)
 
-    use_keywords, avoid_keywords = _job_keywords(job, resume_text)
     result = run_task({"paragraphs": capped, "job": job, "use_keywords": use_keywords,
                        "avoid_keywords": avoid_keywords}, "docx_edits")
     if result is None:
         return None
-    edits, removed_skills, notes = _ground_docx_edits(result["edits"], capped, resume_text, avoid_keywords)
-
-    # What changed: one note per edit that was actually applied, with the AI's reason for it,
-    # so the list never mentions a change the safety check turned down
-    original = {paragraph["id"]: paragraph["text"] for paragraph in capped}
-    reasons = {}
-    for edit in result["edits"]:
-        if edit["paragraph"] in edits and edits[edit["paragraph"]] == edit["text"]:
-            reasons.setdefault(edit["paragraph"], edit["reason"])
-    changes = []
-    for paragraph_id, new_text in edits.items():
-        what = "Removed" if new_text == "" else "Reworded"
-        start = original[paragraph_id][:50] + ("..." if len(original[paragraph_id]) > 50 else "")
-        reason = reasons.get(paragraph_id, "")
-        changes.append(f'{what} "{start}"' + (f": {reason}" if reason else ""))
-    return {"edits": edits, "changes": changes, "removed_skills": removed_skills, "notes": notes,
-            "skill_evidence": result["skill_evidence"]}
+    return {**result, "paragraphs": capped}
