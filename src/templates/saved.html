@@ -15,8 +15,17 @@
   <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
 </div>
 
+{% if load_failed %}
+<p class="alert alert-error" role="alert">Could not open your saved jobs file. Close any program that has
+  data/job_listings.json open, then reload this page. New searches still work.</p>
+{% endif %}
+{% if update_failed %}
+<p class="alert alert-error" role="alert">Could not update your saved jobs file, so nothing was removed. Close any
+  program that has data/job_listings.json open, then try again.</p>
+{% endif %}
+
 {% if total %}
-  {# The filter is a search form (?q=, database_functions.search_jobs); saved.js also filters
+  {# The filter is a search form (?q=, data_manager.search_jobs); saved.js also filters
      as you type and sorts in the browser #}
   <div class="toolbar">
     <form class="field" method="get" action="{{ url_for('saved') }}" role="search">
