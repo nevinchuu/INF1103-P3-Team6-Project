@@ -1,6 +1,7 @@
 # Run from the project root, with Docker Desktop (or Docker Engine) running:
 #   docker compose up --build web      the web app: open http://127.0.0.1:5000 (Ctrl+C to stop)
 #   docker compose run --rm console    the console app
+#   docker compose run --rm --build tests   the tests, inside the container
 # API keys come from .env next to this file. It is read when the app starts, never built into the image.
 # Saved jobs, logs and resumes stay in ./data, ./logs and ./resumes on your computer.
 
@@ -30,3 +31,31 @@ services:
     stdin_open: true  # keyboard input, like docker run -it
     tty: true
     profiles: ["console"]  # started only by "docker compose run console", not by "docker compose up"
+
+  # The tests, run inside the container: one line per test file, then whether they all passed.
+  # No .env and no folders shared: the tests use fake AI and portal replies and temporary files
+  tests:
+    build:
+      context: .
+    image: jobmatcher
+    profiles: ["tests"]  # started only by "docker compose run --rm --build tests"
+    command:
+      - sh
+      - -c
+      - |
+        failed_files=0
+        for test_file in tests/test_*.py; do
+          if test_output=$$(python "$$test_file" 2>&1); then
+            echo "PASS  $$test_file: $$(echo "$$test_output" | tail -n 1)"
+          else
+            failed_files=$$((failed_files + 1))
+            echo "FAIL  $$test_file: $$(echo "$$test_output" | tail -n 1)"
+            echo "$$test_output" | grep "FAIL  "
+          fi
+        done
+        if [ "$$failed_files" -eq 0 ]; then
+          echo "ALL TESTS PASSED"
+        else
+          echo "TESTS FAILED in $$failed_files file(s)"
+          exit 1
+        fi

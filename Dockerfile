@@ -15,8 +15,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Only the app itself: no personal resumes, saved jobs, logs or .env go into the image
+# The app and its tests: no personal resumes, saved jobs, logs or .env go into the image
 COPY src/ src/
+COPY tests/ tests/
 
 # Empty folders for saved jobs and logs, and a resumes folder holding only a sample resume to
 # try the app with. docker-compose.yml mounts your computer's own folders over all three, so
@@ -28,4 +29,5 @@ EXPOSE 5000
 
 # The console app by default (needs a keyboard: docker run -it ...).
 # The web app: docker compose up web, or docker run -p 127.0.0.1:5000:5000 jobmatcher python src/web_app.py
+# The tests: docker compose run --rm --build tests
 CMD ["python", "src/main.py"]

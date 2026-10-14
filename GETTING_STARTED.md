@@ -140,7 +140,19 @@ Stretch jobs are still shown, ranked below the others. Each card gives the reaso
 
 ## Run the tests
 
-The tests need no internet and no API key, and never touch your saved jobs.
+The tests need no internet and no API key, and never touch your saved jobs. There are 64 in five files:
+
+| File | Tests | What it checks |
+|---|---|---|
+| `tests/test_data_manager.py` | 15 | Missing or corrupt files, backups, saving, queries, removal |
+| `tests/test_io_manager.py` | 11 | Re-asking on bad input, form checks, resume files, portal replies |
+| `tests/test_logic_manager.py` | 21 | Filters, search steps, ranking, match outcome, tailoring rules |
+| `tests/test_main.py` | 7 | The console app from start to finish |
+| `tests/test_web_app.py` | 10 | The web app's pages and actions |
+
+### With Python
+
+With the virtual environment from Way 1 active:
 
 ```
 python tests/test_logic_manager.py
@@ -150,7 +162,39 @@ python tests/test_main.py
 python tests/test_web_app.py
 ```
 
-Each prints how many tests passed. Expected: 21, 15, 11, 7 and 10.
+### In Docker
+
+The tests are copied into the image, so they run inside the container. From the project folder, with
+Docker Desktop running:
+
+```
+docker compose run --rm --build tests
+```
+
+`--build` first rebuilds the image (the same one Way 2 uses), so the tests check your latest code; this is
+quick when nothing has changed. It then runs all five files and removes the container when they finish. It takes about 10 seconds, because the tests use fake AI and job portal replies instead
+of the internet. It shows one line per file and a result at the end:
+
+```
+PASS  tests/test_data_manager.py: 15 of 15 tests passed.
+PASS  tests/test_io_manager.py: 11 of 11 tests passed.
+PASS  tests/test_logic_manager.py: 21 of 21 tests passed.
+PASS  tests/test_main.py: 7 of 7 tests passed.
+PASS  tests/test_web_app.py: 10 of 10 tests passed.
+ALL TESTS PASSED
+```
+
+If a test fails, its file shows `FAIL`, the failing test is listed under it, the last line says
+`TESTS FAILED`, and the command returns exit code 1 (0 when everything passes). Use `tests`, not
+`docker run tests`: `tests` is a service in `docker-compose.yml`, not an image name.
+
+### Reading the full output
+
+Running a file directly (`python tests/test_main.py`) shows everything. Each file ends with a line such as
+`15 of 15 tests passed.` Lines starting with `WARNING`, `ERROR` and one `ZeroDivisionError` traceback are
+expected: the tests fake problems on purpose (a corrupt file, the job portal failing, a full disk, a page
+crashing) and check that the app handles them. Only a line with `FAIL` (shown as `[!] FAIL  test_name ...`),
+or a final count lower than the total, means a test failed.
 
 ## If something goes wrong
 
