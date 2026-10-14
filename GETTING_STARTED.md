@@ -94,7 +94,7 @@ Rules for this file:
 Plain Docker, without Compose (your saved jobs are not kept this way):
 
 ```
-docker build -f docker/Dockerfile -t jobmatcher .
+docker build -t jobmatcher .
 docker run -it --rm --env-file .env jobmatcher                                           # console
 docker run --rm --env-file .env -p 127.0.0.1:5000:5000 jobmatcher python src/web_app.py  # web
 ```

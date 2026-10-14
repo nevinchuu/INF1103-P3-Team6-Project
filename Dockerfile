@@ -1,5 +1,5 @@
 # Resume Job Matcher: one image for the console app (the default) and the web app.
-# Build from the project root:  docker build -f docker/Dockerfile -t jobmatcher .
+# Build from the project root:  docker build -t jobmatcher .
 # (or use docker-compose.yml, which also keeps saved jobs, logs and resumes on your computer)
 FROM python:3.11-slim
 

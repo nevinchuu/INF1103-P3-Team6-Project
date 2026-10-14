@@ -8,7 +8,6 @@
 x-app: &app
   build:
     context: .
-    dockerfile: docker/Dockerfile
   image: jobmatcher
   env_file:
     - path: .env

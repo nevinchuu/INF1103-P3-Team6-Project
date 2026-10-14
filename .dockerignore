@@ -1,4 +1,4 @@
-# Docker builds from the project root (docker build -f docker/Dockerfile .),
+# Docker builds from the project root (docker build .), next to the Dockerfile,
 # so this file must live in the project root to take effect.
 
 # Secrets: pass API keys at run time instead (docker run --env-file .env ...)

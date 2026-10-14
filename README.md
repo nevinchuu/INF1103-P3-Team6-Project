@@ -185,7 +185,7 @@ src/
   templates/, static/   web pages, styles and scripts
   ai_manager_test/      manual scripts for trying AI providers and models
 tests/                  test scripts: one per layer, and the console and web app from start to finish
-docker/Dockerfile       the image; docker-compose.yml runs it
+Dockerfile              the image; docker-compose.yml runs it
 data/                   saved jobs (created on first run, not in git)
 logs/                   the console app's log file (not in git)
 resumes/                resumes to search with (only the sample is in git)
