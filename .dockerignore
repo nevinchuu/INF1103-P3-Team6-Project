@@ -19,7 +19,7 @@ data/
 logs/
 resumes/*
 !resumes/sample_resume_fintech.docx
-results/
-output_results/
+**/results/
+**/output_results/
 tests/
 handoff.md
