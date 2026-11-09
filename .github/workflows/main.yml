@@ -1,11 +1,12 @@
 name: Checks
 
-# Runs on every push and pull request to main, or manually from the GitHub "Actions" tab
+# Runs on every push and pull request to main and to the part2 integration branch, or manually from the GitHub
+# "Actions" tab
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "part2" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "part2" ]
   workflow_dispatch:
 
 jobs:
@@ -35,32 +36,8 @@ jobs:
       - name: Compile all Python files
         run: python -m compileall -q src tests
 
-      # 5. Tests for each layer, then the console and the web app from start to finish (fails the
-      #    check if any test fails). They use temporary files, typed answers and fake portal and AI
-      #    replies, so no keyboard, browser, internet, API key or data/job_listings.json is needed
-      - name: Run tests
-        run: |
-          python tests/test_logic_manager.py
-          python tests/test_data_manager.py
-          python tests/test_io_manager.py
-          python tests/test_main.py
-          python tests/test_web_app.py
-
-      # 6. Every layer imports and the web pages load. No API key is needed,
-      #    because no search is run.
-      - name: Import layers and load web pages
-        working-directory: src
-        run: |
-          python -c "
-          import main, io_manager, ai_manager, logic_manager, data_manager, web_app
-          client = web_app.app.test_client()
-          for page in ('/', '/saved'):
-              status = client.get(page).status_code
-              print(page, status)
-              assert status == 200, f'{page} returned {status}'
-          "
-
-      # 7. The console app starts and exits cleanly (4 = Exit). Importing main.py alone
-      #    misses a crash at start-up, e.g. calling a function another layer doesn't have yet
-      - name: Start and exit the console app
-        run: printf '4\n' | python src/main.py | grep -q "Goodbye!"
+      # 5. The automated tests (pytest). They use temporary files, typed answers, a fake AI provider and
+      #    fake portal replies, so no keyboard, browser, internet, API key or real saved data is needed.
+      #    The coverage report lists the lines no test runs; the job fails if coverage drops under 90%
+      - name: Run tests with coverage
+        run: python -m pytest
