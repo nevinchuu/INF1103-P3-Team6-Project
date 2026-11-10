@@ -17,7 +17,7 @@ from pypdf import PdfReader
 ACRONYMS = {"IT", "HR", "AI", "UX", "UI", "QA", "PR", "F&B", "SQL", "AWS", "SAP", "CRM", "ERP", "IOS", "PHP"}
 
 # The resumes: where they are, which files count, and the least text a readable resume has
-DEFAULT_RESUME_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resumes")
+DEFAULT_RESUME_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "resumes")
 ALLOWED_EXTENSIONS = [".pdf", ".docx"]
 MIN_RESUME_CHARS = 100
 
@@ -33,7 +33,7 @@ LINE_WIDTH = 78  # widest line the console prints
 
 # The log file both apps write to: the terminal stays readable, while INFO and up (every search's
 # listings_found vs listings_analysed, and every handled failure) is kept for looking at afterwards
-LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "job_matcher.log")
+LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs", "job_matcher.log")
 LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(module)s | %(message)s"
 
 # The console menus
