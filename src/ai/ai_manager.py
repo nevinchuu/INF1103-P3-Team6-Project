@@ -18,10 +18,10 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from anthropic_provider import AnthropicProvider
-from base_ai_provider import BaseAIProvider, PROVIDER_CONFIGS
-from caching_ai_provider import CachingAIProvider
-from openai_compatible_provider import OpenAICompatibleProvider
+from ai.anthropic_provider import AnthropicProvider
+from ai.base_ai_provider import BaseAIProvider, PROVIDER_CONFIGS
+from ai.caching_ai_provider import CachingAIProvider
+from ai.openai_compatible_provider import OpenAICompatibleProvider
 
 
 # Ordered lowest to highest so logic_manager can compare levels by index
@@ -256,7 +256,7 @@ MALFORMED_RESPONSE_RETRIES = 1  # extra tries when a reply isn't valid JSON or f
 MAX_RESUME_CHARS = 20000       # longer resume text is cut, so a huge file can't overflow the AI's input limit
 DEFAULT_PROVIDER = "gemini"
 # Saved AI replies (CachingAIProvider), next to the saved jobs in <project root>/data/
-AI_CACHE_PATH = str(Path(__file__).resolve().parent.parent / "data" / "ai_cache.json")
+AI_CACHE_PATH = str(Path(__file__).resolve().parents[2] / "data" / "ai_cache.json")
 
 
 class AIManager:
@@ -281,7 +281,7 @@ class AIManager:
         """A manager using the provider chosen by AI_PROVIDER and AI_MODEL in .env (or the defaults); every record
         goes to the live AI, unless AI_CACHE=on wraps the provider in a CachingAIProvider."""
         # Load .env from the project root (parent of src/), so os.getenv("GEMINI_API_KEY") etc. work
-        load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+        load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
         provider = cls.create_provider(os.getenv("AI_PROVIDER", DEFAULT_PROVIDER), os.getenv("AI_MODEL"))
         # Live AI for every record by default. AI_CACHE=on saves and replays replies (same input, same output, and an
         # offline demo can replay a run done earlier), e.g. as a fallback when the network or the API is down

@@ -1,4 +1,4 @@
-"""Tests for IOManager (src/io_manager.py): what the user types is checked and asked again, the web form's values
+"""Tests for IOManager (src/io_layer/io_manager.py): what the user types is checked and asked again, the web form's values
 get the same checks, and messages go where the manager is told to write them.
 
 No keyboard is needed: IOManager takes its input and output as arguments, so a script answers and a list collects.
@@ -8,8 +8,8 @@ import os
 
 import pytest
 
-import io_manager as constants
-from io_manager import IOManager
+from io_layer import io_manager as constants
+from io_layer.io_manager import IOManager
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAMPLE = "sample_resume_fintech.docx"

@@ -1,10 +1,10 @@
-"""Tests for TaskRegistry (src/task_registry.py): progress shared between the web app's threads and its pages."""
+"""Tests for TaskRegistry (src/services/task_registry.py): progress shared between the web app's threads and its pages."""
 
 import threading
 
 import pytest
 
-from task_registry import MAX_FINISHED_TASKS, TaskRegistry
+from services.task_registry import MAX_FINISHED_TASKS, TaskRegistry
 
 
 def test_a_new_task_is_running_with_its_extra_fields():
