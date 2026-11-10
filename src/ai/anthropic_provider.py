@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 import anthropic
 
-from base_ai_provider import API_TIMEOUT_SECONDS, BaseAIProvider
+from ai.base_ai_provider import API_TIMEOUT_SECONDS, BaseAIProvider
 
 
 class AnthropicProvider(BaseAIProvider):

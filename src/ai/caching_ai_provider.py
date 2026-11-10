@@ -7,7 +7,7 @@ import os
 import threading
 from collections.abc import Callable
 
-from base_ai_provider import BaseAIProvider
+from ai.base_ai_provider import BaseAIProvider
 
 
 class CachingAIProvider(BaseAIProvider):

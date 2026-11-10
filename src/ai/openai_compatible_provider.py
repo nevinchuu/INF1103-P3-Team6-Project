@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import openai
 
-from base_ai_provider import API_TIMEOUT_SECONDS, BaseAIProvider
+from ai.base_ai_provider import API_TIMEOUT_SECONDS, BaseAIProvider
 
 
 class OpenAICompatibleProvider(BaseAIProvider):
