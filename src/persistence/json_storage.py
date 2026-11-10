@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Iterable
 
-from storage import Storage
+from persistence.storage import Storage
 
 # How often to retry swapping in a new file when Windows reports it as locked
 # (e.g. an antivirus or OneDrive scan has it open for a moment), and the wait between tries

@@ -7,7 +7,7 @@ import threading
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 
-from storage import Storage
+from persistence.storage import Storage
 
 SQLITE_BUSY_SECONDS = 5  # how long SQLite waits for another connection's lock before giving up
 
