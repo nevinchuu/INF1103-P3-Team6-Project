@@ -308,6 +308,7 @@ details.optional .grid { margin-top: 16px; }
 .alert { padding: 12px 16px; border-radius: var(--radius-control); font-size: 0.875rem; margin-bottom: 16px; }
 .alert-error { background: var(--error-soft); color: var(--error); }
 .alert-info { background: var(--info-soft); color: var(--info); border: 1px solid var(--border); }
+.alert-warning { background: var(--error-soft); color: var(--error); border: 1px solid var(--border); }
 .card .alert-info { background: var(--surface); }
 .form-actions .alert { margin-bottom: 0; }
 
@@ -569,3 +570,48 @@ details.optional .grid { margin-top: 16px; }
   .form-actions .btn { width: 100%; }
   .paper { padding: 24px 20px; }
 }
+
+/* What-if page: the action buttons next to the page title, the skill checkboxes, and the result table */
+.page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* A checkbox inside a pill: undo the full-width text-box look every input gets above */
+.tag input[type="checkbox"] {
+  width: 14px; height: 14px; padding: 0; margin: 0 6px 0 0; border: 0; background: none;
+  vertical-align: -2px; accent-color: var(--text); flex: none;
+}
+.skill-picks { margin-bottom: 16px; }
+
+/* What-if controls: one per row. Side by side, a column was narrower than its own dropdown, so
+   "Roadmap: Best-paid jobs first" was cut off mid-word with no way to read it. */
+.whatif-grid { grid-template-columns: 1fr; gap: 16px; max-width: 540px; }
+.whatif-grid select, .whatif-grid input { width: 100%; }
+.whatif-grid .muted.small { margin-top: 6px; }
+
+/* The skill list folds away once there is an answer to read, and opens again on a click */
+.skill-pick-list { margin-bottom: 16px; }
+.skill-pick-list > summary { cursor: pointer; padding: 6px 0; }
+.skill-pick-list[open] > summary { margin-bottom: 10px; }
+.skill-pick-list .skill-picks { margin-bottom: 0; }
+label.tag { cursor: pointer; display: inline-flex; align-items: center; margin: 0; font-weight: 500; }
+label.tag:has(input:checked) { background: var(--good-soft); color: var(--good); border-color: transparent; }
+.plain-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.plain-table th, .plain-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border, #e5e7eb); vertical-align: top; }
+.plain-table th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* Status and note on a saved job */
+.status-badge { font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; }
+.job-update { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.job-update input[name="note"] { min-width: 200px; flex: 1 1 200px; }
+
+/* Saved page: the application tracker, saved jobs by stage */
+.tracker { margin-bottom: 20px; }
+.tracker-stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.tracker-stage {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-2);
+}
+.tracker-stage.has-jobs { background: var(--surface); }
+.tracker-count { font-size: 1.25rem; font-weight: 600; color: var(--text); }
+.tracker-stage:not(.has-jobs) .tracker-count { color: var(--muted); }
+.tracker-label { font-size: 0.75rem; color: var(--muted); }
+.tracker-hint { margin: 8px 0 0; }
+@media (max-width: 480px) { .tracker-stages { gap: 4px; } .tracker-stage { padding: 8px 2px; } .tracker-label { font-size: 0.6875rem; } }
