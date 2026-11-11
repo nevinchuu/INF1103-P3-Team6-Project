@@ -10,9 +10,16 @@
     {# The job titles searched on MyCareersFuture, e.g. "Searched MyCareersFuture for: Data Analyst, Business Analyst" #}
     <p class="lead">Searched MyCareersFuture for: {{ profile.search_keywords | join(", ") }}</p>
   </div>
-  <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
+  <div class="page-actions">
+    {# The what-if simulator and skill roadmap for this search's jobs (web_app.whatif) #}
+    <a class="btn btn-secondary" href="{{ url_for('whatif', search_id=search_id) }}">What if I learned...?</a>
+    <a class="btn btn-secondary" href="{{ url_for('index') }}">New search</a>
+  </div>
 </div>
 
+{% if partial_message %}
+<p class="alert alert-warning" role="status">{{ partial_message }}</p>
+{% endif %}
 {% if step_message %}
 <p class="alert alert-info" role="status">{{ step_message }}</p>
 {% endif %}
@@ -34,8 +41,8 @@
 
   <dl class="stats">
     <div><dt>Qualification</dt><dd>{{ profile.highest_qualification }}</dd></div>
-    <div><dt>Experience</dt><dd>{{ profile.years_of_experience }} yrs</dd></div>
-    <div><dt>Internships</dt><dd>{{ profile.internship_months }} mths</dd></div>
+    <div><dt>Experience</dt><dd>{{ profile.years_of_experience }} {{ 'yr' if profile.years_of_experience == 1 else 'yrs' }}</dd></div>
+    <div><dt>Internships</dt><dd>{{ profile.internship_months }} {{ 'mth' if profile.internship_months == 1 else 'mths' }}</dd></div>
     <div><dt>Level</dt><dd>{{ profile.seniority_level }}</dd></div>
   </dl>
 
@@ -127,4 +134,19 @@
     {% endif %}
   </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Same check as the search form (app.js): the browser stops "Update matches" if max salary is below min
+  const minSalary = document.getElementById("min_salary");
+  const maxSalary = document.getElementById("max_salary");
+  function checkSalaryRange() {
+    const low = Number(minSalary.value || 0);
+    const high = maxSalary.value === "" ? Infinity : Number(maxSalary.value);
+    maxSalary.setCustomValidity(high < low ? "Maximum salary cannot be lower than minimum salary." : "");
+  }
+  minSalary.addEventListener("input", checkSalaryRange);
+  maxSalary.addEventListener("input", checkSalaryRange);
+</script>
 {% endblock %}
