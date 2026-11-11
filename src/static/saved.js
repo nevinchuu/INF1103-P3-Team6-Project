@@ -1,4 +1,4 @@
-// Saved jobs page: filters and sorts the job cards in the browser, and asks before clearing them all.
+// Saved jobs page: filters and sorts the job cards in the browser, and asks before removing one job or all of them.
 // Each card carries data-order (position in the saved file), data-salary, data-match and data-text.
 
 const list = document.getElementById("job-list");
@@ -52,5 +52,11 @@ filterInput.addEventListener("input", applyFilter);
 clearForm.addEventListener("submit", (event) => {
   if (!confirm(`Remove all ${clearForm.dataset.total} saved jobs? This cannot be undone.`)) event.preventDefault();
 });
+// Removing one job can't be undone either, so ask first, as for Clear all
+for (const form of document.querySelectorAll(".remove-form")) {
+  form.addEventListener("submit", (event) => {
+    if (!confirm(`Remove "${form.dataset.title}" from your saved jobs?`)) event.preventDefault();
+  });
+}
 
 applySort();

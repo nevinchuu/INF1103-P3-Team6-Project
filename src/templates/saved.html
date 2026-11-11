@@ -8,7 +8,7 @@
   <div>
     <h1>Saved jobs</h1>
     <p class="lead">
-      {% if total %}{{ total }} jobs saved from your searches. Select a job to see the details.
+      {% if total %}{{ total }} job{{ 's' if total != 1 }} saved from your searches. Select a job to see the details.
       {% else %}Jobs from your searches are saved here.{% endif %}
     </p>
   </div>
@@ -20,11 +20,30 @@
   data/job_listings.json open, then reload this page. New searches still work.</p>
 {% endif %}
 {% if update_failed %}
-<p class="alert alert-error" role="alert">Could not update your saved jobs file, so nothing was removed. Close any
+<p class="alert alert-error" role="alert">Could not update your saved jobs file, so nothing was changed. Close any
   program that has data/job_listings.json open, then try again.</p>
 {% endif %}
 
+{% if problem %}
+<p class="alert alert-error" role="alert">{{ problem }}</p>
+{% endif %}
+{% if done %}
+<p class="alert alert-info" role="status">{{ done }}</p>
+{% endif %}
+
 {% if total %}
+  {# Application tracker: saved jobs by stage (DataManager.tracker_summary, counted with SQL on SQLite) #}
+  <section class="tracker" aria-label="Application tracker">
+    <ol class="tracker-stages">
+      {% for status, count in tracker.by_status.items() %}
+      <li class="tracker-stage{% if count %} has-jobs{% endif %}"><span class="tracker-count">{{ count }}</span><span class="tracker-label">{{ status }}</span></li>
+      {% endfor %}
+    </ol>
+    {% if tracker.strong_not_applied %}
+    <p class="muted small tracker-hint">{{ tracker.strong_not_applied }} strong match{{ 'es are' if tracker.strong_not_applied != 1 else ' is' }} saved but not applied to yet. Open one below to tailor your resume and apply.</p>
+    {% endif %}
+  </section>
+
   {# The filter is a search form (?q=, data_manager.search_jobs); saved.js also filters
      as you type and sorts in the browser #}
   <div class="toolbar">
@@ -46,7 +65,7 @@
     </form>
   </div>
 
-  {{ job_list(jobs, saved=True) }}
+  {{ job_list(jobs, saved=True, statuses=statuses, open_url=open_url, keyword=keyword) }}
   <p id="no-filter-match" class="muted empty-filter" {% if jobs %}hidden{% endif %}>No saved jobs match that filter.</p>
 {% else %}
   <div class="empty card">
