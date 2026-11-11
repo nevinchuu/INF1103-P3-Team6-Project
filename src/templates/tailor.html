@@ -46,7 +46,7 @@
       <li>Write a short summary aimed at this job</li>
       <li>Put your most relevant skills and experience first</li>
       <li>Reword your points to use the job's language where your resume backs it up</li>
-      <li class="check-no">Never add skills, jobs, dates or numbers that aren't in your resume. Anything it tries to add is removed.</li>
+      <li class="check-no">Never add skills, jobs, dates or numbers that aren't in your resume. A rewrite that names a skill your resume doesn't show (the job's skills, or common tools like Docker or AWS, however they are spelt) is removed.</li>
     </ul>
     <p class="alert alert-info privacy-note">Your resume's text and this job's description are sent to {{ ai_name }}.
       Remove anything you'd rather not share (e.g. your home address or NRIC) from the resume first.</p>
@@ -54,7 +54,7 @@
 
   <div class="form-actions">
     <p id="form-error" class="alert alert-error" role="alert" hidden></p>
-    <a class="btn btn-ghost" href="{{ url_for('saved') }}">Back to saved jobs</a>
+    <a class="btn btn-ghost" href="{{ url_for('saved') }}">Go to saved jobs</a>
     <button id="task-button" class="btn btn-primary" type="submit" {% if not resumes %}disabled{% endif %}>Create tailored resume</button>
   </div>
 </form>
