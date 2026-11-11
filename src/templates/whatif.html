@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}What if I learned... · Resume Job Matcher{% endblock %}
+
+{% block content %}
+<div class="page-head page-head-row">
+  <div>
+    <h1>What if I learned...?</h1>
+    <p class="lead">Pick skills the jobs ask for and see how your {{ job_count }} job{{ "s" if job_count != 1 }} would be ranked, or let a planner choose what to learn first. No AI is used: this only re-ranks the jobs already found.</p>
+  </div>
+  <a class="btn btn-secondary" href="{{ url_for('results', search_id=search_id) }}">Back to matches</a>
+</div>
+
+{% if problem %}
+<p class="alert alert-error" role="alert">{{ problem }}</p>
+{% endif %}
+
+{% if not skills_available %}
+<div class="empty card">
+  <h3>Nothing to learn</h3>
+  <p class="muted">{% if job_count %}You already have every skill these jobs list, so there is nothing to simulate.{% else %}None of the jobs found meet the filters this search used, so there is nothing to simulate.{% endif %}</p>
+</div>
+{% else %}
+<form class="card refine" method="post" action="{{ url_for('whatif', search_id=search_id) }}">
+  {# What to do comes before the skills: it decides what a tick means, and it used to sit below them #}
+  <div class="refine-grid whatif-grid">
+    <div class="field">
+      <label for="mode">What to do</label>
+      <select id="mode" name="mode">
+        <option value="test" {% if mode == 'test' %}selected{% endif %}>Test the skills I picked</option>
+        {% for key, label in planners %}<option value="{{ key }}" {% if mode == key %}selected{% endif %}>Roadmap: {{ label }}</option>{% endfor %}
+      </select>
+      <p class="muted small">With <em>Test the skills I picked</em>, tick at least one skill below and see how it would change your ranking. With a <em>Roadmap</em>, see which skills to learn and in what order &mdash; ticking limits what it may choose from, and ticking none lets it choose from all of them.</p>
+    </div>
+    <div class="field">
+      <label for="steps">Roadmap length</label>
+      <input id="steps" name="steps" type="number" min="1" max="{{ max_steps }}" value="{{ steps }}">
+    </div>
+    <div class="field">
+      <label for="top_n">Top list size</label>
+      <input id="top_n" name="top_n" type="number" min="1" value="{{ top_n }}">
+    </div>
+    <div class="field">
+      <label for="extra_skills">Other skills (comma-separated)</label>
+      <input id="extra_skills" name="extra_skills" type="text" value="{{ extra_skills }}" placeholder="e.g. Tableau, Excel">
+    </div>
+  </div>
+  {# Open until there is something to read, then folded away so the answer is not pushed off the screen.
+     A closed <details> still posts the boxes inside it, so a re-run keeps what was ticked. #}
+  <details class="skill-pick-list" {% if not report and not roadmap %}open{% endif %}>
+    <summary><strong>Skills you might learn</strong> <span class="muted small">({{ skills_available | length }}, most wanted first)</span></summary>
+    <ul class="tags skill-picks">
+      {% for skill in skills_available %}
+      <li><label class="tag"><input type="checkbox" name="skill" value="{{ skill }}" {% if skill in chosen %}checked{% endif %}> {{ skill }}</label></li>
+      {% endfor %}
+    </ul>
+  </details>
+  <div class="refine-actions">
+    <button class="btn btn-primary" type="submit">Run</button>
+  </div>
+</form>
+{% endif %}
+
+{% if roadmap %}
+<section class="card gap-card">
+  <h2>Roadmap: {{ roadmap.planner_label }}</h2>
+  {% if roadmap.is_empty %}
+  <p class="muted">None of these skills would improve your matches.</p>
+  {% else %}
+  <ol class="plain-list">
+    {% for step in roadmap.steps %}
+    <li><span class="tag">{{ step.skill }}</span>
+      <span class="muted small">{% if step.places_gained > 0 %}adds {{ step.places_gained }} place{{ 's' if step.places_gained != 1 }} gained on top of the steps before it{% else %}covers more of the skills your jobs ask for, without changing their order{% endif %};
+      with the steps so far, {{ step.report.jobs_moved_up }} job{{ ' moves' if step.report.jobs_moved_up == 1 else 's move' }} up</span></li>
+    {% endfor %}
+  </ol>
+  {% if roadmap.steps | length < steps %}
+  <p class="muted small">The roadmap stopped after {{ roadmap.steps | length }} step{{ 's' if roadmap.steps | length != 1 }}: no other skill would improve your matches by this planner's measure.</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+
+{% if report %}
+<section class="card">
+  <h2>{% if roadmap %}Result of the whole roadmap{% else %}If you learned {{ report.skills | join(", ") }}{% endif %}</h2>
+  <p>{{ report.jobs_moved_up }} of {{ report.movements | length }} job{{ 's' if report.movements | length != 1 }} would move up ({{ report.places_gained }} place{{ 's' if report.places_gained != 1 }} gained in total), and {{ report.outcome_upgrades }} match{{ 'es' if report.outcome_upgrades != 1 }} would improve. Ranks are among the jobs your results page lists; "not listed" means a job matches none of your skills yet.</p>
+  {% if report.entered_top %}
+  <p><strong>Would enter your top {{ report.top_n }}:</strong> {{ report.entered_top | map(attribute='title') | map('tidy_title') | join(", ") }}</p>
+  {% endif %}
+  {% if report.left_top %}
+  <p class="muted"><strong>Would drop out of your top {{ report.top_n }}:</strong> {{ report.left_top | map(attribute='title') | map('tidy_title') | join(", ") }}</p>
+  {% endif %}
+  <table class="plain-table">
+    <thead><tr><th>Job</th><th>Rank</th><th>Match</th><th>Newly covered</th></tr></thead>
+    <tbody>
+      {% for move in report.movements %}
+      <tr>
+        <td>{{ move.title | tidy_title }}<br><span class="muted small">{{ move.company }}</span></td>
+        <td>{{ move.rank_before if move.listed_before else "not listed" }} &rarr; {{ move.rank_after if move.listed_after else "not listed" }}{% if move.places_gained > 0 %} <span class="muted small">(up {{ move.places_gained }})</span>{% elif move.places_gained < 0 %} <span class="muted small">(down {{ -move.places_gained }})</span>{% endif %}</td>
+        <td>{% if move.outcome_before == move.outcome_after %}{{ move.outcome_after }}{% else %}{{ move.outcome_before }} &rarr; {{ move.outcome_after }}{% endif %}</td>
+        <td>{{ move.skills_gained | join(", ") or "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

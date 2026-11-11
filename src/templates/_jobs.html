@@ -3,7 +3,7 @@
    saved=True leaves out the rank and adds a Remove button and the data-* values saved.js sorts by.
    Facts the portal doesn't give ("Not specified") are left out. #}
 
-{% macro job_list(jobs, saved=False) %}
+{% macro job_list(jobs, saved=False, statuses=[], open_url='', keyword='') %}
 <ol class="job-list{% if saved %} job-list-saved{% endif %}" id="job-list">
   {% for job in jobs %}
   {% set required = job.required_skills | length %}
@@ -12,7 +12,7 @@
       data-salary="{{ job.max_salary or job.min_salary or 0 }}"
       data-match="{{ (matched / required) if required else 0 }}"
       data-text="{{ [job.title or '', job.company or '', job.location or ''] | join(' ') | lower }}"{% endif %}>
-    <details class="job-card">
+    <details class="job-card"{% if open_url and job.job_url == open_url %} open id="changed-job"{% endif %}>
       <summary>
         {% if not saved %}<span class="job-rank">{{ loop.index }}</span>{% endif %}
         <span class="job-main">
@@ -22,6 +22,7 @@
         <span class="job-side">
           <span class="job-salary">{{ format_salary(job) }}</span>
           {# The logic layer's outcome (logic_manager.match_outcome); jobs saved before it existed have none #}
+          {% if saved and job.status and job.status != statuses[0] %}<span class="status-badge">{{ job.status }}</span>{% endif %}
           {% if job.match_outcome %}<span class="outcome outcome-{{ job.match_outcome.split()[0] | lower }}">{{ job.match_outcome }}</span>{% endif %}
           {% if required %}
           <span class="match" title="{{ matched }} of {{ required }} required skills matched">
@@ -65,17 +66,32 @@
         </div>
 
         <div class="job-actions">
+          {# Only a web link: a hand-edited "javascript:" link must never become a clickable button #}
+          {% if (job.job_url or '').startswith('https://') %}
           <a class="btn btn-secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">
             View on MyCareersFuture
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>
           </a>
+          {% endif %}
           <a class="btn btn-secondary" href="{{ url_for('tailor', job_url=job.job_url) }}">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
             Tailor my resume
           </a>
           {% if saved %}
-          <form action="{{ url_for('remove_saved') }}" method="post">
+          {# Status and note on a saved job (web_app.update_saved -> data_manager.update_saved_job) #}
+          <form class="job-update" action="{{ url_for('update_saved') }}" method="post">
             <input type="hidden" name="job_url" value="{{ job.job_url }}">
+            <input type="hidden" name="q" value="{{ keyword }}">
+            <select name="status" aria-label="Status">
+              {% for option in statuses %}<option {% if option == (job.status or statuses[0]) %}selected{% endif %}>{{ option }}</option>{% endfor %}
+            </select>
+            <input name="note" type="text" maxlength="500" placeholder="Add a note" aria-label="Note" value="{{ job.note or '' }}">
+            <button class="btn btn-secondary" type="submit">Save</button>
+          </form>
+          <form class="remove-form" action="{{ url_for('remove_saved') }}" method="post"
+                data-title="{{ job.title or 'this job' }}">
+            <input type="hidden" name="job_url" value="{{ job.job_url }}">
+            <input type="hidden" name="q" value="{{ keyword }}">
             <button class="btn btn-ghost" type="submit">Remove</button>
           </form>
           {% endif %}
