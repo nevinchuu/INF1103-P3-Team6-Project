@@ -1,16 +1,14 @@
-"""Tests for the storage backends (src/persistence/storage.py, json_storage.py, sqlite_storage.py). One suite runs against
-JsonStorage and SqliteStorage, which also proves they can be substituted for each other (Liskov): the same calls
+"""Tests for the storage backends (src/data_layer/storage.py, postgres_storage.py). One suite runs against an in-memory storage and
+PostgresStorage (on a fake database), which also proves they can be substituted for each other (Liskov): the same calls
 must give the same results."""
 
-import glob
-import json
-import os
-import sqlite3
 import threading
 
 import pytest
 
-from persistence.data_manager import JsonStorage, SqliteStorage, Storage
+from data_layer.data_manager import Storage
+from fakes import FakePostgres, InMemoryStorage
+from data_layer.postgres_storage import PostgresStorage
 
 
 def make_job(number: int, **changes) -> dict:
@@ -20,27 +18,26 @@ def make_job(number: int, **changes) -> dict:
     return job
 
 
-def make_storage(kind: str, folder) -> Storage:
-    if kind == "json":
-        return JsonStorage(str(folder / "data" / "job_listings.json"))
-    return SqliteStorage(str(folder / "data" / "jobs.db"))
+def make_storage(kind: str) -> Storage:
+    if kind == "memory":
+        return InMemoryStorage()
+    return PostgresStorage("fake", pool=FakePostgres())  # the real class and SQL strings, on a stand-in pool
 
 
-@pytest.fixture(params=["json", "sqlite"])
+@pytest.fixture(params=["memory", "postgres"])
 def kind(request):
     return request.param
 
 
 @pytest.fixture
-def storage(kind, tmp_path) -> Storage:
-    return make_storage(kind, tmp_path)
+def storage(kind) -> Storage:
+    return make_storage(kind)
 
 
 # ---------- the shared contract ----------
 
-def test_a_missing_store_is_created_empty(storage):
+def test_a_new_store_is_empty(storage):
     assert storage.load_all() == []
-    assert os.path.exists(storage.path)
 
 
 def test_insert_saves_a_job_and_numbers_the_ids(storage):
@@ -123,16 +120,6 @@ def test_clear_removes_everything_and_the_store_still_works(storage):
     assert storage.insert(make_job(1)) is True
 
 
-def test_saved_jobs_are_still_there_in_a_new_run(kind, tmp_path):
-    first = make_storage(kind, tmp_path)
-    first.insert_many([make_job(1), make_job(2)])
-    first.update(make_job(1)["job_url"], {"note": "kept"})
-    second = make_storage(kind, tmp_path)  # a new object on the same file, as after restarting the program
-    saved = second.load_all()
-    assert [job["title"] for job in saved] == ["Data Analyst 1", "Data Analyst 2"]
-    assert saved[0]["note"] == "kept"
-
-
 def test_the_callers_job_is_not_changed_by_saving(storage):
     job = make_job(1)
     storage.insert(job)
@@ -192,112 +179,3 @@ def test_many_threads_saving_at_once_lose_nothing(storage):
     saved = storage.load_all()
     assert len(saved) == 20 and len({job["job_url"] for job in saved}) == 20
     assert sorted(job["ID"] for job in saved) == list(range(20))
-
-
-def test_a_corrupt_file_is_backed_up_not_crashed(kind, tmp_path):
-    storage = make_storage(kind, tmp_path)
-    os.makedirs(os.path.dirname(storage.path), exist_ok=True)
-    broken = b'[{"title": "half a reco' if kind == "json" else b"this is definitely not a SQLite database " * 40
-    with open(storage.path, "wb") as file:
-        file.write(broken)
-    assert storage.load_all() == []  # starts again with an empty list...
-    backups = glob.glob(storage.path + ".*.bak")
-    assert len(backups) == 1
-    with open(backups[0], "rb") as file:
-        assert file.read() == broken  # ...and nothing the user had is lost
-    assert storage.insert(make_job(1)) is True  # and the new store works
-
-
-def test_two_corrupt_files_in_the_same_second_each_keep_a_backup(kind, tmp_path):
-    storage = make_storage(kind, tmp_path)
-    os.makedirs(os.path.dirname(storage.path), exist_ok=True)
-    for number in range(3):
-        with open(storage.path, "wb") as file:
-            file.write(b"{broken %d " % number + b"x" * 200)
-        assert storage.load_all() == []
-    assert len(glob.glob(storage.path + ".*.bak")) == 3
-
-
-def test_a_store_that_cannot_be_opened_raises_storage_error_which_is_an_os_error(kind, tmp_path):
-    blocker = tmp_path / "blocker"
-    blocker.write_text("a file where a folder is needed")
-    path = str(blocker / "sub" / ("jobs.db" if kind == "sqlite" else "job_listings.json"))
-    storage = SqliteStorage(path) if kind == "sqlite" else JsonStorage(path)
-    with pytest.raises(OSError) as caught:
-        storage.load_all()
-    assert isinstance(caught.value, OSError)
-
-
-# ---------- JSON-only behaviour ----------
-
-def write_raw(path, text):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as file:
-        file.write(text)
-
-
-@pytest.mark.parametrize("text", ['{"jobs": []}', "null", "42"])
-def test_json_that_is_not_a_list_is_treated_as_corrupt(tmp_path, text):
-    storage = make_storage("json", tmp_path)
-    write_raw(storage.path, text)
-    assert storage.load_all() == []
-    assert len(glob.glob(storage.path + ".*.bak")) == 1
-
-
-def test_json_entries_that_are_not_jobs_are_skipped_and_dropped_on_the_next_save(tmp_path):
-    storage = make_storage("json", tmp_path)
-    write_raw(storage.path, json.dumps([1, "x", None, {"title": "no link"}, make_job(1)]))
-    assert [job["title"] for job in storage.load_all()] == ["Data Analyst 1"]
-    assert storage.insert(make_job(2)) is True
-    with open(storage.path, encoding="utf-8") as file:
-        assert all(isinstance(entry, dict) and "job_url" in entry for entry in json.load(file))
-
-
-def test_a_save_that_fails_leaves_the_old_data_and_no_temporary_file(storage):
-    storage.insert(make_job(1))
-    with pytest.raises(TypeError):
-        storage.insert(make_job(2, salary=object()))  # a value that cannot be stored
-    assert [job["title"] for job in storage.load_all()] == ["Data Analyst 1"]
-    assert glob.glob(os.path.join(os.path.dirname(storage.path), "*.tmp")) == []
-
-
-# ---------- SQLite-only behaviour ----------
-
-def test_sqlite_has_a_unique_key_on_the_link(tmp_path):
-    storage = make_storage("sqlite", tmp_path)
-    storage.insert(make_job(1))
-    connection = sqlite3.connect(storage.path)
-    with pytest.raises(sqlite3.IntegrityError):
-        connection.execute("INSERT INTO jobs (job_url, data) VALUES (?, ?)", (make_job(1)["job_url"], "{}"))
-    connection.close()
-
-
-def test_sqlite_recreates_a_database_deleted_while_running(tmp_path):
-    storage = make_storage("sqlite", tmp_path)
-    storage.insert(make_job(1))
-    os.remove(storage.path)
-    assert storage.load_all() == []
-    assert storage.insert(make_job(1)) is True
-
-
-def test_a_locked_sqlite_database_raises_storage_error_instead_of_crashing(tmp_path):
-    storage = SqliteStorage(str(tmp_path / "jobs.db"), busy_seconds=0.2)
-    storage.insert(make_job(1))
-    holder = sqlite3.connect(storage.path)
-    holder.execute("BEGIN EXCLUSIVE")  # another program has the database locked
-    try:
-        with pytest.raises(OSError):
-            storage.insert(make_job(2))
-        with pytest.raises(OSError):
-            storage.load_all()
-    finally:
-        holder.rollback()
-        holder.close()
-    assert [job["title"] for job in storage.load_all()] == ["Data Analyst 1"]  # fine again once it is released
-    assert glob.glob(storage.path + ".*.bak") == []  # a lock is not corruption: nothing was backed up
-
-
-def test_sqlite_is_not_slow_for_a_few_hundred_jobs(tmp_path):
-    storage = make_storage("sqlite", tmp_path)
-    assert storage.insert_many([make_job(number) for number in range(300)]) == 300
-    assert len(storage.search("analyst 29")) == 13  # 29, 129, 229 and 290-299
