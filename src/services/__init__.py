@@ -1,1 +1,0 @@
-"""JobPortal, SearchService and TaskRegistry."""
