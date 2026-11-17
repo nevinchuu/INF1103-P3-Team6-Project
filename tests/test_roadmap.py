@@ -4,17 +4,20 @@ Pure logic, so nothing here needs an AI, a network or a file: jobs are hard-code
 produces (required, matched and missing skills).
 """
 
+import ast
 import copy
 import random
 
 import pytest
 
-from planning import career_simulator
-from planning.career_simulator import CareerSimulator, MAX_SKILLS, MAX_STEPS
-from planning.greedy_planner import GreedyPlanner
-from logic.logic_manager import LogicManager, OUTCOME_FAIR, OUTCOME_STRETCH, OUTCOME_STRONG
-from planning.roadmap_planner import RoadmapPlanner
-from planning.salary_weighted_planner import SalaryWeightedPlanner
+from logic_layer import career_simulator
+from logic_layer.career_simulator import CareerSimulator
+from logic_layer.greedy_planner import GreedyPlanner
+from io_layer.input_validator import InputValidator, MAX_SKILLS, MAX_STEPS
+from logic_layer.logic_manager import LogicManager, OUTCOME_FAIR, OUTCOME_STRETCH, OUTCOME_STRONG
+from logic_layer.ranking_rules import RankingRules
+from logic_layer.roadmap_planner import RoadmapPlanner
+from logic_layer.salary_weighted_planner import SalaryWeightedPlanner
 
 PROFILE = {"years_of_experience": 1, "highest_qualification": "Diploma", "seniority_level": "Fresh/entry level",
            "core_skills": ["SQL"]}
@@ -55,7 +58,8 @@ def test_the_ranking_is_the_logic_managers_on_random_jobs(simulator):
     by_rank = sorted(report["movements"], key=lambda m: m["rank_before"])
     listed = [m["title"] for m in by_rank if m["listed_before"]]
     # The listed jobs are in the results page's order; jobs matching no skills come after them
-    assert listed == [job["title"] for job in LOGIC.rank_jobs(PROFILE, [job for job in pool if job["matched_skills"]])]
+    ranked = sorted([job for job in pool if job["matched_skills"]], key=lambda job: LOGIC.sort_key(PROFILE, job))
+    assert listed == [job["title"] for job in ranked]
     assert all(not m["listed_before"] for m in by_rank[len(listed):])
 
 
@@ -127,6 +131,16 @@ def test_only_the_most_wanted_skills_are_offered(simulator):
     assert set(planned["skills"]) <= set(offered)
 
 
+# Seen on the What-If page: "UAT", "UAT Testing" and "User Acceptance Testing" offered as three skills to learn
+def test_one_skill_under_several_names_is_offered_and_learned_once(simulator):
+    pool = [make_job("A", ["SQL", "UAT"], ["SQL"]), make_job("B", ["SQL", "User Acceptance Testing"], ["SQL"]),
+            make_job("C", ["SQL", "UAT Testing"], ["SQL"])]
+    assert simulator.learnable_skills(pool) == ["User Acceptance Testing"]  # the full name, counted for 3 jobs
+    report = simulator.what_if(LOGIC, PROFILE, pool, ["User Acceptance Testing"])
+    assert sorted(m["title"] for m in report["movements"] if m["skills_gained"]) == ["A", "B", "C"]
+    assert simulator.what_if(LOGIC, PROFILE, pool, ["uat"])["skills"] == ["User Acceptance Testing"]
+
+
 def test_normalise_ignores_case_and_extra_spaces():
     assert CareerSimulator.normalise("  Power   BI ") == CareerSimulator.normalise("power bi") == "power bi"
 
@@ -141,27 +155,17 @@ def test_the_real_profile_and_jobs_are_never_changed_by_a_simulation(simulator):
 
 # ---------- input validation ----------
 
+# The format of the lists (empty, too many, too long, listed twice) is InputValidator's: see test_input_validator.py
 @pytest.mark.parametrize("raw, message", [
-    ([], "at least one skill"),
-    (["", "   "], "at least one skill"),
-    (["Python", "python"], "listed more than once"),
     (["sql"], 'You already have "sql"'),
     (["Cobol"], 'None of these jobs asks for "Cobol"'),
-    (["Python"] + [f"S{n}" for n in range(MAX_SKILLS)], "or fewer"),
 ])
-def test_bad_skill_lists_are_rejected_with_a_message(simulator, raw, message):
+def test_skills_the_candidate_has_or_no_job_asks_for_are_rejected_with_a_message(simulator, raw, message):
     with pytest.raises(ValueError, match=message):
         simulator.what_if(LOGIC, PROFILE, jobs(), raw)
 
 
-def test_ticking_nothing_is_an_error_to_test_but_means_every_skill_to_a_roadmap(simulator):
-    """The two modes read an empty tick list oppositely, which the page has to say: testing nothing has
-    nothing to measure, while a roadmap with nothing ticked may choose from everything."""
-    with pytest.raises(ValueError, match="at least one skill") as rejected:
-        simulator.what_if(LOGIC, PROFILE, jobs(), [])
-    # the message must name the mode that does accept an empty list, or it reads as a dead end
-    assert "roadmap" in str(rejected.value)
-
+def test_ticking_nothing_means_every_skill_to_a_roadmap(simulator):
     planned = simulator.roadmap(LOGIC, PROFILE, jobs(), "greedy", skills=None)
     assert planned["steps"], "a roadmap with nothing ticked should still choose skills"
     assert set(planned["skills"]) <= set(simulator.learnable_skills(jobs()))
@@ -171,11 +175,6 @@ def test_skills_are_matched_ignoring_case_and_given_back_as_the_jobs_write_them(
     assert simulator.what_if(LOGIC, PROFILE, jobs(), ["  python ", "TABLEAU"])["skills"] == ["Python", "Tableau"]
 
 
-def test_non_text_skills_are_ignored_not_crashed_on(simulator):
-    with pytest.raises(ValueError, match="at least one skill"):
-        simulator.what_if(LOGIC, PROFILE, jobs(), [None, 5])  # type: ignore[list-item]
-
-
 def test_no_jobs_to_compare_is_an_error(simulator):
     with pytest.raises(ValueError, match="Run a search first"):
         simulator.what_if(LOGIC, PROFILE, [], ["Python"])
@@ -183,26 +182,9 @@ def test_no_jobs_to_compare_is_an_error(simulator):
         simulator.roadmap(LOGIC, PROFILE, [], "greedy")
 
 
-@pytest.mark.parametrize("top_n", [0, -1, "5", None, True])
-def test_the_top_list_size_must_be_a_positive_whole_number(simulator, top_n):
-    with pytest.raises(ValueError, match="at least 1 job"):
-        simulator.what_if(LOGIC, PROFILE, jobs(), ["Python"], top_n=top_n)
-
-
-@pytest.mark.parametrize("steps", [0, -2, MAX_STEPS + 1, 2.5, "3", True])
-def test_roadmap_length_must_be_within_limits(simulator, steps):
-    with pytest.raises(ValueError, match="between 1 and"):
-        simulator.roadmap(LOGIC, PROFILE, jobs(), "greedy", steps=steps)
-
-
 def test_an_unknown_planner_is_an_error_that_names_the_choices(simulator):
     with pytest.raises(ValueError, match="greedy, salary"):
         simulator.roadmap(LOGIC, PROFILE, jobs(), "magic")
-
-
-def test_typed_skills_are_split_on_commas():
-    assert CareerSimulator.split(" Python, ,SQL ,, Tableau") == ["Python", "SQL", "Tableau"]
-    assert CareerSimulator.split("") == []
 
 
 # ---------- roadmap and the planners ----------
@@ -214,15 +196,56 @@ def test_the_greedy_planner_takes_the_best_rank_gain_first(simulator):
     assert roadmap["report"]["skills"] == roadmap["skills"]  # the final report covers every step
 
 
-def test_the_salary_weighted_planner_prefers_the_better_paid_jobs(simulator):
-    pool = [make_job("Low", ["SQL", "Excel"], ["SQL"], salary=2000),
-            make_job("High", ["SQL", "Python"], ["SQL"], salary=9000),
-            make_job("Mid", ["SQL", "Excel", "Go"], ["SQL"], salary=3000)]
-    # Go lifts the mid-paid job two places, Python lifts the best-paid job one place: the greedy planner counts
-    # places (Go), the salary-weighted one counts places times pay (Python)
-    assert simulator.roadmap(LOGIC, PROFILE, pool, "greedy", steps=1)["skills"] == ["Go"]
-    salary = simulator.roadmap(LOGIC, PROFILE, pool, "salary", steps=1)
-    assert salary["skills"] == ["Python"] and salary["planner_label"] == SalaryWeightedPlanner().label
+def test_the_salary_planner_takes_the_skill_that_raises_the_top_lists_pay_most(simulator):
+    pool = [make_job("Low", ["SQL", "Excel"], ["SQL"], salary=3000),
+            make_job("High", ["SQL", "Python"], ["SQL"], salary=9000)]
+    # Low is the top job (a tie keeps the listed order). Excel only strengthens Low; Python lifts High to the top,
+    # raising the top list's average pay from $3,000 to $9,000
+    salary = simulator.roadmap(LOGIC, PROFILE, pool, "salary", steps=2, top_n=1)
+    assert salary["planner_label"] == SalaryWeightedPlanner().label
+    assert [step["skill"] for step in salary["steps"]] == ["Python"]
+    assert SalaryWeightedPlanner().value(salary["report"])[0] == 9000
+    # Excel after Python would make Low a Strong match too; the tie keeps Low first, so the top job would pay
+    # $3,000 again: a plan to earn more never takes a skill that lowers the pay
+
+
+def test_skills_that_only_help_together_are_one_step(simulator):
+    pool = [make_job("Low", ["SQL", "Excel", "R"], ["SQL", "Excel"], salary=3000),
+            make_job("High", ["SQL", "P", "Q", "Z"], ["SQL"], salary=9000)]
+    # High needs two more skills to pass Low (which has 2 matched); one alone raises no pay, so the pair wins
+    roadmap = simulator.roadmap(LOGIC, PROFILE, pool, "salary", steps=3, top_n=1)
+    assert (roadmap["steps"][0]["skill"], roadmap["steps"][0]["skills"]) == ("P + Q", ["P", "Q"])
+    assert SalaryWeightedPlanner().value(roadmap["steps"][0]["report"])[0] == 9000
+    assert len(roadmap["skills"]) == 3  # and the third skill still fills the plan
+    # A pair counts as two skills: with room for one only, the step is the best single skill instead
+    one = simulator.roadmap(LOGIC, PROFILE, pool, "salary", steps=1, top_n=1)
+    assert len(one["skills"]) == 1 and len(one["steps"]) == 1
+    # After the pair, no pay rise is left: the last step is a single skill, never a pair that adds no pay
+    assert roadmap["steps"][-1]["skills"] == [roadmap["skills"][-1]]
+
+
+# Seen on the What-If page: a third step "A + B, learn together" that raised no pay. Two skills always match more
+# than one, so a pair is only taken when it moves the plan's main goal
+@pytest.mark.parametrize("planner_key", ["salary", "greedy"])
+def test_a_pair_is_only_suggested_when_it_moves_the_main_goal(simulator, planner_key):
+    pool = [make_job("Low", ["SQL", "Excel", "R"], ["SQL", "Excel"], salary=3000),
+            make_job("High", ["SQL", "P", "Q", "Z"], ["SQL"], salary=9000)]
+    planner = {"salary": SalaryWeightedPlanner(), "greedy": GreedyPlanner()}[planner_key]
+    roadmap = simulator.roadmap(LOGIC, PROFILE, pool, planner_key, steps=5, top_n=1)
+    today = simulator.roadmap(LOGIC, PROFILE, pool, planner_key, steps=0, top_n=1)["report"]
+    for index, step in enumerate(roadmap["steps"]):
+        if len(step["skills"]) == 2:
+            previous = roadmap["steps"][index - 1]["report"] if index else today
+            assert planner.value(step["report"])[0] > planner.value(previous)[0], step["skill"]
+
+
+# The Earn more plan used to stop as soon as no skill raised the top list's average pay, so asking for more skills
+# gave the same plan. Now each step still goes to the best-paid progress, so the plan has as many skills as asked
+@pytest.mark.parametrize("steps", [1, 2, 3])
+def test_the_earn_more_plan_has_as_many_skills_as_asked_for(simulator, steps):
+    # With no more jobs than the top list holds, no skill can change the top list's average pay
+    roadmap = simulator.roadmap(LOGIC, PROFILE, jobs(), "salary", steps=steps, top_n=5)
+    assert len(roadmap["skills"]) == steps
 
 
 def test_a_roadmap_stops_at_the_requested_length(simulator):
@@ -240,8 +263,6 @@ def test_each_step_builds_on_the_ones_before(simulator):
 def test_the_roadmap_can_be_limited_to_skills_the_user_chose(simulator):
     roadmap = simulator.roadmap(LOGIC, PROFILE, jobs(), "greedy", steps=3, skills=["Excel", "python"])
     assert set(roadmap["skills"]) <= {"Excel", "Python"}
-    with pytest.raises(ValueError, match="more than once"):
-        simulator.roadmap(LOGIC, PROFILE, jobs(), "greedy", skills=["Excel", "excel"])
 
 
 def test_no_missing_skills_gives_an_empty_roadmap_not_an_error(simulator):
@@ -312,7 +333,7 @@ def test_a_planner_stops_when_no_skill_improves_its_value():
 
 def test_a_new_planner_plugs_in_without_changing_the_simulator():
     simulator = CareerSimulator([GreedyPlanner(), FewestJobsFirstPlanner()])
-    assert simulator.planners == [("greedy", "Biggest rank gain first"), ("narrow", "Narrowest skill first")]
+    assert simulator.planners == [("greedy", "Rank higher"), ("narrow", "Narrowest skill first")]
     roadmap = simulator.roadmap(LOGIC, PROFILE, jobs(), "narrow", steps=2)
     assert roadmap["planner_label"] == "Narrowest skill first" and len(roadmap["steps"]) >= 1
     with pytest.raises(ValueError):
@@ -341,14 +362,60 @@ def test_planners_can_be_swapped_with_the_same_calls(planner):
     assert isinstance(planner.value(roadmap["report"]), tuple)
 
 
-def test_the_ranking_rules_can_be_changed_and_the_simulator_follows(simulator):
-    # The simulator ranks through the LogicManager it is given, so different rules give a different what-if
-    only_count = LogicManager(rules=[LogicManager.rank_by_skill_count])
+def test_the_ranking_keys_can_be_changed_and_the_simulator_follows(simulator):
+    # The simulator ranks through the RankingRules it is given (here a LogicManager), so different rules give a
+    # different what-if
+    only_count = LogicManager(ranking_keys=[lambda fit: -fit["matched"]])
     pool = [make_job("Few", ["SQL", "Go"], ["SQL"], min_years_experience=0),
             make_job("Many", ["SQL", "Python", "Go"], ["SQL", "Python"], min_years_experience=5)]
     default_top = simulator.what_if(LOGIC, PROFILE, pool, ["Go"])["movements"][0]["title"]
     count_top = simulator.what_if(only_count, PROFILE, pool, ["Go"])["movements"][0]["title"]
     assert default_top != count_top
+
+
+class MostSkillsFirstRules(RankingRules):
+    """Test-only ranking rules that are not a LogicManager: most matched skills first, Strong once nothing is
+    missing. If the simulator still works with them, it depends on the interface only."""
+
+    def match_outcome(self, profile: dict, job: dict) -> tuple[str, str]:
+        return (OUTCOME_FAIR, "Skills missing.") if job["missing_skills"] else (OUTCOME_STRONG, "Nothing missing.")
+
+    def sort_key(self, profile: dict, job: dict) -> tuple:
+        return (-len(job["matched_skills"]), job["title"])
+
+
+def test_the_ranking_rules_interface_cannot_be_used_on_its_own_or_half_implemented():
+    with pytest.raises(TypeError):
+        RankingRules()  # type: ignore[abstract]
+
+    class OutcomeOnly(RankingRules):
+        def match_outcome(self, profile: dict, job: dict) -> tuple[str, str]:
+            return OUTCOME_FAIR, ""
+
+    with pytest.raises(TypeError):
+        OutcomeOnly()  # type: ignore[abstract]
+    assert isinstance(LOGIC, RankingRules)  # the manager implements it
+
+
+def test_the_simulator_works_with_any_ranking_rules_not_only_the_logic_manager(simulator):
+    # Dependency inversion: the simulator needs the two questions of RankingRules, not the LogicManager
+    rules = MostSkillsFirstRules()
+    report = simulator.what_if(rules, PROFILE, jobs(), ["Python"], top_n=5)
+    # A and B now match 2 skills each (tie: by title), C none; only B is missing nothing, so only B is Strong
+    assert [m["title"] for m in report["movements"]] == ["A", "B", "C"]
+    outcomes = {m["title"]: m["outcome_after"] for m in report["movements"]}
+    assert outcomes == {"A": OUTCOME_FAIR, "B": OUTCOME_STRONG, "C": OUTCOME_FAIR}
+    roadmap = simulator.roadmap(rules, PROFILE, jobs(), "greedy", steps=2)
+    assert roadmap["steps"] and set(roadmap["skills"]) <= {"Python", "Tableau", "Excel"}
+
+
+def test_the_simulator_never_names_the_logic_manager():
+    # No loop between the two classes: the manager owns the simulator, and the simulator knows only RankingRules
+    tree = ast.parse(open(career_simulator.__file__, encoding="utf-8").read())
+    imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    assert "logic_layer.logic_manager" not in imported and "LogicManager" not in names
+    assert "logic_layer.ranking_rules" in imported and "RankingRules" in names
 
 
 # ---------- the what-if matches the results page ----------
@@ -367,12 +434,36 @@ def test_a_job_matching_no_skills_is_not_listed_and_can_enter_the_top_list(simul
 def test_a_roadmap_may_choose_from_more_ticked_skills_than_a_test(simulator):
     many = [f"Skill{number}" for number in range(MAX_SKILLS + 3)]
     pool = [make_job("Big", ["SQL", *many], ["SQL"])]
-    with pytest.raises(ValueError, match="or fewer"):
-        simulator.what_if(LOGIC, PROFILE, pool, many)
     assert simulator.roadmap(LOGIC, PROFILE, pool, "greedy", 2, 5, many)["steps"]
 
 
-def test_a_very_long_skill_name_is_rejected_briefly(simulator):
-    with pytest.raises(ValueError) as error:
-        simulator.what_if(LOGIC, PROFILE, jobs(), ["x" * 10_000])
-    assert "characters or fewer" in str(error.value) and len(str(error.value)) < 100
+# ---------- the simulator is a part of LogicManager ----------
+
+def test_logic_manager_runs_what_if_through_its_simulator():
+    logic = LogicManager()
+    assert logic.planners == CareerSimulator().planners
+    assert logic.learnable_skills(jobs()) == CareerSimulator().learnable_skills(jobs())
+    assert logic.what_if(PROFILE, jobs(), ["Tableau"], 2) == CareerSimulator().what_if(logic, PROFILE, jobs(), ["Tableau"], 2)
+    assert logic.roadmap(PROFILE, jobs(), "greedy", 2, 5) == CareerSimulator().roadmap(logic, PROFILE, jobs(), "greedy", 2, 5)
+    with pytest.raises(ValueError, match="Run a search first"):
+        logic.what_if(PROFILE, [], ["Tableau"])
+
+
+# The IO manager's validator checks the form; the logic layer supplies the skills the jobs ask for, so a chosen
+# skill is written the way the jobs write it
+def test_the_what_if_form_is_checked_against_the_skills_the_jobs_ask_for():
+    asked_for = LogicManager().learnable_skills(jobs())
+    values, problem = InputValidator().check_what_if({"mode": "test", "skills": ["tableau"]}, asked_for)
+    assert problem == "" and values["skills"] == ["Tableau"]
+    assert "at least one skill" in InputValidator().check_what_if({"mode": "test"}, asked_for)[1]
+
+
+@pytest.mark.parametrize("planner", [GreedyPlanner(), SalaryWeightedPlanner(), FewestJobsFirstPlanner(),
+                                     IndifferentPlanner()])
+def test_every_planner_works_where_a_planner_is_expected(planner):
+    # Liskov: any planner can be handed to LogicManager, and its roadmap is made of skills from the jobs
+    roadmap = LogicManager(planners=[planner]).roadmap(PROFILE, jobs(), planner.key, 3, 5)
+    asked_for = {skill for job in jobs() for skill in job["missing_skills"]}
+    assert set(roadmap["skills"]) <= asked_for
+    # each step adds one skill, or a pair that only helps together; in order, they are the roadmap's skills
+    assert [skill for step in roadmap["steps"] for skill in step["skills"]] == roadmap["skills"]
