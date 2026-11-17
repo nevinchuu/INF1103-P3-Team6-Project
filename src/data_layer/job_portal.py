@@ -8,18 +8,25 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from datetime import date
 
 import requests
 
 # MyCareersFuture, where the job listings come from (search, details)
 JOBS_API_URL = "https://api.mycareersfuture.gov.sg/v2/search"
 JOB_DETAILS_API_URL = "https://api.mycareersfuture.gov.sg/v2/jobs/{job_id}"
-MAX_DESCRIPTION_CHARS = 2000   # job descriptions are cut to this length to keep AI prompts small
+# Job descriptions are cut to this length to keep AI prompts in bounds. Most postings run 2,000-5,000 characters
+# and the skills often come last ("Requirements: ... Python"), so the cut is above nearly all of them
+MAX_DESCRIPTION_CHARS = 6000
 JOB_FETCH_ATTEMPTS = 3         # tries per job-portal search before giving up
+# Tries per job posting. The portal answers 429 ("too many requests") when many postings are read at once; a
+# posting that is not read leaves the AI only the employer's skill tags, so a busy reply is waited out and retried
+DETAIL_ATTEMPTS = 4
+MAX_RETRY_WAIT = 10  # seconds: the longest wait for one retry, even if the portal asks for longer
 
 # The portal's own search filters (checked against its search API). Job type and minimum salary
 # filter well; for work arrangement it only has "Telecommuting", the closest to Remote or Hybrid.
-# Maximum salary and years of experience can't be filtered there, so logic_manager does those.
+# Maximum salary and years of experience can't be filtered there, so the logic layer does those.
 PORTAL_EMPLOYMENT_TYPES = {  # job type preference -> the portal's employment types (either one counts)
     "Full Time": ["Full Time", "Permanent"],  # permanent jobs are full-time too
     "Part Time": ["Part Time"],
@@ -27,8 +34,11 @@ PORTAL_EMPLOYMENT_TYPES = {  # job type preference -> the portal's employment ty
     "Internship/Attachment": ["Internship/Attachment"],
 }
 PORTAL_TELECOMMUTING = 2  # id of "Telecommuting" in the portal's flexibleWorkArrangements filter
+# A posting's jobStatus words that mean it has stopped taking applications. Live jobs are "Open" or "Re-open" (a
+# job posted again), so only these words, or an expiry date that has passed, mark a job as closed
+CLOSED_STATUS_WORDS = ("closed", "expired", "withdrawn", "filled", "deleted", "suspended")
 # The last listings each search returned, used when MyCareersFuture can't be reached (<project root>/data/)
-SAVED_LISTINGS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data",
+SAVED_LISTINGS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data",
                                    "portal_listings.json")
 
 
@@ -38,33 +48,28 @@ class JobPortal:
 
     def __init__(self, http: object = requests, sleep: Callable[[float], None] = time.sleep,
                  saved_listings_path: str | None = None) -> None:
-        self._http = http      # anything with post/get like the requests module (a stub in tests)
-        self._sleep = sleep    # how to wait between retries (a no-op in tests)
+        self.__http = http      # anything with post/get like the requests module (a stub in tests)
+        self.__sleep = sleep    # how to wait between retries (a no-op in tests)
         # Where each search's last listings are kept, so a search still works when the portal can't be reached
         # (None: keep nothing, e.g. in tests)
         self.__saved_path = saved_listings_path
         self.__lock = threading.Lock()  # web searches run in background threads
 
-    @classmethod
-    def from_environment(cls) -> "JobPortal":
-        """The real portal, keeping the last listings of each search in data/ (PORTAL_LISTINGS_PATH overrides)."""
-        return cls(saved_listings_path=os.getenv("PORTAL_LISTINGS_PATH") or SAVED_LISTINGS_PATH)
-
-    def clean_html(self, text: str) -> str:
+    def __clean_html(self, text: str) -> str:
         """Strips HTML tags and collapses whitespace."""
         # Job descriptions arrive as HTML, e.g. "<p>We are <strong>hiring</strong></p>" -> "We are hiring"
         text = html.unescape(re.sub(r"<[^>]+>", " ", text or ""))
         return re.sub(r"\s+", " ", text).strip()
 
-    def search(self, search_query: str, limit: int = 10, portal_filters: dict | None = None) -> list[dict] | None:
+    def search(self, query: str, limit: int = 10, filters: dict | None = None) -> list[dict] | None:
         """Fetches job listings from MyCareersFuture, with retries. Returns [] if none are listed, or None if
         every attempt failed."""
         raw_jobs = None
         for attempt in range(1, JOB_FETCH_ATTEMPTS + 1):
             try:
                 # The portal reads the search words and filters from the JSON body; in the URL they are ignored
-                response = self._http.post(JOBS_API_URL, params={"limit": limit},
-                                         json={"search": search_query, **(portal_filters or {})}, timeout=20)
+                response = self.__http.post(JOBS_API_URL, params={"limit": limit},
+                                           json={"search": query, **(filters or {})}, timeout=20)
                 response.raise_for_status()  # turns HTTP errors (e.g. 500) into exceptions
                 reply = response.json()
                 raw_jobs = reply.get("results") if isinstance(reply, dict) else None
@@ -73,26 +78,26 @@ class JobPortal:
                 break  # success - stop retrying
             except (requests.RequestException, ValueError) as error:
                 if attempt == JOB_FETCH_ATTEMPTS:
-                    logging.error(f"Job search for '{search_query}' failed after {attempt} attempts: {error}")
-                    return self.__last_listings(search_query, limit, portal_filters)
-                logging.warning(f"Job search for '{search_query}' failed ({type(error).__name__}); retrying...")
-                self._sleep(2 * attempt)  # wait a little longer each time: 2s, then 4s
+                    logging.error(f"Job search for '{query}' failed after {attempt} attempts: {error}")
+                    return self.__last_listings(query, limit, filters)
+                logging.warning(f"Job search for '{query}' failed ({type(error).__name__}); retrying...")
+                self.__sleep(2 * attempt)  # wait a little longer each time: 2s, then 4s
 
         jobs = []
         for job in raw_jobs:
             try:
-                jobs.append(self.listing_from_portal(job))
+                jobs.append(self.__listing_from_portal(job))
             except (AttributeError, KeyError, TypeError) as error:
-                logging.warning(f"Skipped a '{search_query}' listing in an unexpected format "
+                logging.warning(f"Skipped a '{query}' listing in an unexpected format "
                                 f"({type(error).__name__}: {error})")
-        self.__keep_listings(search_query, limit, portal_filters, jobs)
+        self.__keep_listings(query, limit, filters, jobs)
         return jobs
 
     # ---------- the last listings of each search, for when the portal can't be reached ----------
 
     @staticmethod
-    def __search_key(search_query: str, limit: int, portal_filters: dict | None) -> str:
-        return json.dumps([search_query.strip().lower(), limit, portal_filters or {}], sort_keys=True)
+    def __search_key(query: str, limit: int, filters: dict | None) -> str:
+        return json.dumps([query.strip().lower(), limit, filters or {}], sort_keys=True)
 
     def __read_saved(self) -> dict:
         try:
@@ -105,13 +110,13 @@ class JobPortal:
             logging.warning(f"Could not read the saved listings ({type(error).__name__}); ignoring them")
             return {}
 
-    def __keep_listings(self, search_query: str, limit: int, portal_filters: dict | None, jobs: list[dict]) -> None:
+    def __keep_listings(self, query: str, limit: int, filters: dict | None, jobs: list[dict]) -> None:
         """Saves a successful search's listings. Saving is a convenience, so a failure is only logged."""
         if self.__saved_path is None:
             return
         with self.__lock:
             saved = self.__read_saved()
-            saved[self.__search_key(search_query, limit, portal_filters)] = jobs
+            saved[self.__search_key(query, limit, filters)] = jobs
             temporary = f"{self.__saved_path}.tmp"
             try:
                 os.makedirs(os.path.dirname(self.__saved_path) or ".", exist_ok=True)
@@ -121,18 +126,18 @@ class JobPortal:
             except OSError as error:
                 logging.warning(f"Could not save the listings ({type(error).__name__}: {error})")
 
-    def __last_listings(self, search_query: str, limit: int, portal_filters: dict | None) -> list[dict] | None:
+    def __last_listings(self, query: str, limit: int, filters: dict | None) -> list[dict] | None:
         """The listings this exact search returned last time, or None if it never succeeded."""
         if self.__saved_path is None:
             return None
         with self.__lock:
-            jobs = self.__read_saved().get(self.__search_key(search_query, limit, portal_filters))
+            jobs = self.__read_saved().get(self.__search_key(query, limit, filters))
         if not isinstance(jobs, list):
             return None
-        logging.warning(f"Using the last saved listings for '{search_query}' (MyCareersFuture could not be reached)")
+        logging.warning(f"Using the last saved listings for '{query}' (MyCareersFuture could not be reached)")
         return [job for job in jobs if isinstance(job, dict)]
 
-    def listing_from_portal(self, job: dict) -> dict:
+    def __listing_from_portal(self, job: dict) -> dict:
         """One portal listing as a job record with simple names. Raises AttributeError, KeyError
         or TypeError if the listing isn't in the expected format."""
         # Keep only the fields we use, with simple names; "or {}" stops missing data from crashing it
@@ -153,42 +158,73 @@ class JobPortal:
                 arrangement["flexibleWorkArrangement"] for arrangement in job.get("flexibleWorkArrangements") or []
             ],
             "listed_skills": [skill["skill"] for skill in job.get("skills", [])],
-            "description": self.clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
+            "description": self.__clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
             "job_url": (job.get("metadata") or {}).get("jobDetailsUrl", "N/A"),
+            # When it was posted (or last reposted), e.g. "2026-11-12", for sorting newest first; "" if not given
+            "posted_date": str((job.get("metadata") or {}).get("newPostingDate") or ""),
         }
 
     def details(self, job_url: str) -> dict | None:
-        """Gets one job's full description from MyCareersFuture, using the id at the end of its link.
-        Returns {"description", "listed_skills", "is_open"}, or None if it can't be fetched."""
+        """Gets one job's full posting from MyCareersFuture, using the id at the end of its link. Returns
+        {"description", "listed_skills", "is_open", "min_years_experience"}, or None if it can't be fetched.
+        The search results leave out the description and the years of experience, so these come from here;
+        min_years_experience is None when the posting doesn't say."""
         # e.g. ".../job/it/data-analyst-acme-5365191b6ddd018b70f7b8149c0a20ca" -> "5365191b...20ca"
         match = re.search(r"([0-9a-f]{32})/?(?:\?.*)?$", job_url or "")
         if not match:
             return None
         try:
-            response = self._http.get(JOB_DETAILS_API_URL.format(job_id=match.group(1)), timeout=20)
+            for attempt in range(1, DETAIL_ATTEMPTS + 1):
+                try:
+                    response = self.__http.get(JOB_DETAILS_API_URL.format(job_id=match.group(1)), timeout=20)
+                    if getattr(response, "status_code", 200) == 429 or getattr(response, "status_code", 200) >= 500:
+                        raise requests.HTTPError(f"busy ({response.status_code})", response=response)
+                    break
+                except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as error:
+                    if attempt == DETAIL_ATTEMPTS:
+                        raise
+                    self.__sleep(self.__retry_wait(getattr(error, "response", None), attempt))
             response.raise_for_status()
             job = response.json()
+            status = str((job.get("status") or {}).get("jobStatus") or "").lower()
+            expiry = str((job.get("metadata") or {}).get("expiryDate") or "")[:10]  # "2026-12-12", or ""
+            # ISO dates compare as text; an unknown status or date counts as open
+            closed = any(word in status for word in CLOSED_STATUS_WORDS) or (
+                re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry) is not None and expiry < date.today().isoformat())
             return {
-                "description": self.clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
+                "description": self.__clean_html(job.get("description", ""))[:MAX_DESCRIPTION_CHARS],
                 "listed_skills": [skill["skill"] for skill in job.get("skills", [])],
-                "is_open": ((job.get("status") or {}).get("jobStatus") or "Open") == "Open",
+                "is_open": not closed,
+                "min_years_experience": job.get("minimumYearsExperience"),
             }
         # A reply in an unexpected format (AttributeError, KeyError, TypeError) is treated like no reply
         except (requests.RequestException, ValueError, AttributeError, KeyError, TypeError) as error:
             logging.warning(f"Could not fetch job details for {job_url} ({type(error).__name__})")
             return None
 
+    @staticmethod
+    def __retry_wait(response: object | None, attempt: int) -> float:
+        """Seconds to wait before trying a posting again: what the portal's Retry-After asks (at most
+        MAX_RETRY_WAIT), else 1, 2, 4... seconds."""
+        headers = getattr(response, "headers", None) or {}
+        try:
+            return min(MAX_RETRY_WAIT, max(0.0, float(headers.get("Retry-After", ""))))
+        except (TypeError, ValueError):
+            return float(2 ** (attempt - 1))
+
     def filters_for(self, preferences: dict | None, step: str) -> dict:
         """MyCareersFuture's own search filters for one search step: every preference it can filter, the job type,
-        or none."""
+        or none. preferences["position_levels"] (e.g. ["Fresh/entry level", "Junior Executive"]) limits every
+        step to those levels."""
         preferences = preferences or {}
-        job_type = {}
+        levels = {"positionLevels": preferences["position_levels"]} if preferences.get("position_levels") else {}
+        job_type = dict(levels)
         if preferences.get("job_type") in PORTAL_EMPLOYMENT_TYPES:
-            job_type = {"employmentTypes": PORTAL_EMPLOYMENT_TYPES[preferences["job_type"]]}
+            job_type["employmentTypes"] = PORTAL_EMPLOYMENT_TYPES[preferences["job_type"]]
         if step == "job type":
             return job_type
         if step != "all":
-            return {}
+            return levels
         everything = dict(job_type)
         if preferences.get("min_salary"):
             everything["salary"] = preferences["min_salary"]
@@ -207,7 +243,7 @@ class JobPortal:
         fetched = {}  # (keyword, portal filters) -> listings, so a step that searches the same way doesn't search again
         unique_jobs = {}
         for step in steps:
-            portal_filters = self.filters_for(preferences, step)
+            filters = self.filters_for(preferences, step)
             # A dict keyed by URL removes duplicates: the same job found by two searches is kept once
             unique_jobs = {}
             portal_failed = False
@@ -215,10 +251,10 @@ class JobPortal:
             summary["searches_failed"] = 0
             summary["searches_errored"] = 0  # only the ones that failed (no reply), not empty ones
             for done, keyword in enumerate(keywords, start=1):
-                key = (keyword, repr(sorted(portal_filters.items())))
+                key = (keyword, repr(sorted(filters.items())))
                 if key not in fetched:
-                    logging.info(f"Searching portal for '{keyword}' ({step} search filters: {portal_filters})...")
-                    fetched[key] = self.search(keyword, limit=limit_per_search, portal_filters=portal_filters)
+                    logging.info(f"Searching portal for '{keyword}' ({step} search filters: {filters})...")
+                    fetched[key] = self.search(keyword, limit=limit_per_search, filters=filters)
                 found = fetched[key]
                 if not found:
                     summary["searches_failed"] += 1  # failed, or nothing listed under that title
@@ -227,7 +263,8 @@ class JobPortal:
                 portal_failed = portal_failed or found is None
                 for job in found or []:
                     if job["job_url"] != "N/A" and (fits is None or fits(job, step)):
-                        unique_jobs.setdefault(job["job_url"], job)
+                        # found_by: the job title whose search found it first (the What-If page's "Based on")
+                        unique_jobs.setdefault(job["job_url"], {**job, "found_by": keyword})
                 if on_progress:
                     on_progress("search", done, len(keywords))
             if unique_jobs or portal_failed:
