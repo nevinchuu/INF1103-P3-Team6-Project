@@ -6,12 +6,14 @@
 {% block content %}
 <div class="page-head">
   <p class="eyebrow">Tailor my resume</p>
-  <h1>{{ job.title | tidy_title }}</h1>
-  <p class="lead">{{ job.company }} · <span title="{{ job.location }}">{{ job.location | short_location }}</span> · {{ format_salary(job) }}</p>
+  <h1>{{ job.title_text }}</h1>
+  <p class="lead">{{ job.company }} · <span title="{{ job.location }}">{{ job.location_text }}</span> · {{ job.salary_text }}</p>
 </div>
 
 <form id="task-form" action="{{ url_for('start_tailor') }}" method="post">
   <input type="hidden" name="job_url" value="{{ job.job_url }}">
+  {# The search the job came from, so it is found there first #}
+  <input type="hidden" name="from_search" value="{{ from_search }}">
 
   <section class="card">
     <div class="card-head">
@@ -39,22 +41,22 @@
       <span class="step">2</span>
       <div>
         <h2>What the AI will do</h2>
-        <p class="muted small">One AI call, usually 20-40 seconds.</p>
+        <p class="muted small">Takes about 20–40 seconds.</p>
       </div>
     </div>
     <ul class="check-list">
-      <li>Write a short summary aimed at this job</li>
-      <li>Put your most relevant skills and experience first</li>
-      <li>Reword your points to use the job's language where your resume backs it up</li>
-      <li class="check-no">Never add skills, jobs, dates or numbers that aren't in your resume. A rewrite that names a skill your resume doesn't show (the job's skills, or common tools like Docker or AWS, however they are spelt) is removed.</li>
+      <li>Writes a short summary aimed at this job</li>
+      <li>Puts your most relevant skills and experience first</li>
+      <li>Uses the job's wording where your resume backs it up</li>
+      <li class="check-no">Never adds skills, jobs, dates or numbers you don't already have. Anything like that is taken out.</li>
     </ul>
-    <p class="alert alert-info privacy-note">Your resume's text and this job's description are sent to {{ ai_name }}.
+    <p class="alert alert-info privacy-note">Your resume's text and this job's description are sent to {{ ai_name.split(" (")[0] }}, an AI service.
       Remove anything you'd rather not share (e.g. your home address or NRIC) from the resume first.</p>
   </section>
 
   <div class="form-actions">
     <p id="form-error" class="alert alert-error" role="alert" hidden></p>
-    <a class="btn btn-ghost" href="{{ url_for('saved') }}">Go to saved jobs</a>
+    <a class="btn btn-ghost" href="{{ url_for('saved') }}">Back to saved jobs</a>
     <button id="task-button" class="btn btn-primary" type="submit" {% if not resumes %}disabled{% endif %}>Create tailored resume</button>
   </div>
 </form>

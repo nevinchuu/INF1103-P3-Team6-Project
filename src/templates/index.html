@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-head">
   <h1>Find jobs that fit your resume</h1>
-  <p class="lead">Choose a resume and set your preferences. The AI reads it, searches MyCareersFuture and ranks the best matches for you.</p>
+  <p class="lead">Choose your resume and what you're looking for. We'll find jobs on MyCareersFuture and rank the best matches for you.</p>
 </div>
 
 <form id="task-form" action="{{ url_for('start_search') }}" method="post" enctype="multipart/form-data"
@@ -25,7 +25,7 @@
           {% for name in resumes %}
           <option value="{{ name }}">{{ name }}</option>
           {% else %}
-          <option value="">No resumes yet. Upload one</option>
+          <option value="" disabled selected>No saved resumes yet</option>
           {% endfor %}
         </select>
       </div>
@@ -36,7 +36,8 @@
     </div>
     {# app.js fills this in once a file is picked #}
     <p id="resume-note" class="muted small resume-note" hidden></p>
-    <p class="alert alert-info privacy-note">Your resume's text is sent to {{ ai_name }} to analyse it.
+    {# The service's name only, e.g. "Google Gemini": the model id in brackets means nothing to a user #}
+    <p class="alert alert-info privacy-note">Your resume's text is sent to {{ ai_name.split(" (")[0] }}, an AI service, to read it.
       Remove anything you'd rather not share (e.g. your home address or NRIC) before uploading.</p>
   </section>
 
@@ -44,8 +45,8 @@
     <div class="card-head">
       <span class="step">2</span>
       <div>
-        <h2>Preferences</h2>
-        <p class="muted small">Leave blank to see everything.</p>
+        <h2>What you're looking for</h2>
+        <p class="muted small">Fill in only what matters to you.</p>
       </div>
     </div>
 
@@ -53,10 +54,6 @@
       <div class="field">
         <label for="min_salary">Minimum monthly salary (SGD)</label>
         <input id="min_salary" name="min_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="0" inputmode="numeric">
-      </div>
-      <div class="field">
-        <label for="max_salary">Maximum monthly salary (SGD)</label>
-        <input id="max_salary" name="max_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="{{ '{:,}'.format(max_salary) }}" inputmode="numeric">
       </div>
       <div class="field">
         <label for="job_type">Job type</label>
@@ -70,20 +67,26 @@
           {% for option in work_arrangements %}<option>{{ option }}</option>{% endfor %}
         </select>
       </div>
-      <div class="field">
-        <label for="max_years_experience">Max years of experience required</label>
-        <input id="max_years_experience" name="max_years_experience" type="number" min="0" max="{{ max_years }}" placeholder="Any" inputmode="numeric">
+      <div class="field field-wide">
+        {# The most experience a job may ask for, not the user's own: someone with 2 years can enter 3 to try for
+           3-year jobs. The label and unit read as one sentence around the box so it can't be taken the other way #}
+        <label for="max_years_experience">Jobs that ask for up to</label>
+        <div class="input-suffix">
+          <input id="max_years_experience" name="max_years_experience" type="number" min="0" max="{{ max_years }}" placeholder="Any" inputmode="numeric" aria-describedby="experience-hint">
+          <span>years of experience</span>
+        </div>
+        <p id="experience-hint" class="muted small field-hint">Leave blank for any. You can type more than you have, e.g. 3 if you have 2, to also see jobs that ask for a bit more.</p>
       </div>
     </div>
 
     <details class="optional">
-      <summary>Optional: details the AI might miss</summary>
-      <p class="muted small">Only used if your resume doesn't mention them.</p>
+      <summary>Optional</summary>
+      <p class="muted small">Only used if we can't find these in your resume.</p>
       <div class="grid">
         <div class="field">
           <label for="fallback_qualification">Highest completed qualification</label>
           <select id="fallback_qualification" name="fallback_qualification">
-            <option value="">Not set</option>
+            <option value="">Choose…</option>
             {% for level in education_levels %}<option>{{ level }}</option>{% endfor %}
           </select>
         </div>
@@ -103,8 +106,8 @@
 
 {{ progress_panel("Finding your matches", [
   (0, "Reading your resume"),
-  (25, "Searching the job portal"),
-  (40, "Analysing job listings"),
+  (25, "Searching MyCareersFuture"),
+  (40, "Reading job requirements"),
   (92, "Ranking and saving your matches"),
 ]) }}
 {% endblock %}
