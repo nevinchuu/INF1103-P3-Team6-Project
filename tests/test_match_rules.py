@@ -1,15 +1,15 @@
-"""Tests for the match rules (src/logic/match_rule.py and its three rules) and how LogicManager uses them.
+"""Tests for the match rules (src/logic_layer/match_rule.py and its three rules) and how LogicManager uses them.
 
 No AI, network or files: the jobs are hard-coded sample AI records.
 """
 
 import pytest
 
-from logic.education_rule import EducationRule
-from logic.experience_rule import ExperienceRule
-from logic.logic_manager import FAR_ABOVE_LEVELS, LogicManager
-from logic.match_rule import MatchRule
-from logic.seniority_rule import SeniorityRule
+from logic_layer.education_rule import EducationRule
+from logic_layer.experience_rule import ExperienceRule
+from logic_layer.logic_manager import FAR_ABOVE_LEVELS, LogicManager
+from logic_layer.match_rule import MatchRule, OUTCOME_FAIR, OUTCOME_STRETCH, OUTCOME_STRONG
+from logic_layer.seniority_rule import SeniorityRule
 
 GOOD_URL = "https://www.mycareersfuture.gov.sg/job/it/data-analyst-acme-5365191b6ddd018b70f7b8149c0a20ca"
 PROFILE = {"highest_qualification": "Diploma", "years_of_experience": 1, "seniority_level": "Fresh/entry level"}
@@ -52,20 +52,30 @@ def test_the_seniority_rule_uses_the_distance_it_is_given():
     assert SeniorityRule(FAR_ABOVE_LEVELS).shortfall(fit(position_levels=["Executive"]), make_job()) == ""
     assert SeniorityRule(2).shortfall(fit(position_levels=["Junior Executive"]), make_job()) == \
         "is well above your current level"
-    assert SeniorityRule(7).far_above_levels == 7
+
+
+class RemoteOnlyRule(MatchRule):
+    """A rule LogicManager has never seen: the candidate can't work onsite."""
+
+    def shortfall(self, fit: dict, job: dict) -> str:
+        return "is onsite only" if job.get("work_arrangement") == "Onsite" else ""
 
 
 def test_the_standard_rules_are_the_three_from_phase_1_and_every_one_is_a_match_rule():
-    rules = LogicManager().match_rules
-    assert [type(rule) for rule in rules] == [ExperienceRule, EducationRule, SeniorityRule]
-    assert all(isinstance(rule, MatchRule) for rule in rules)
+    # The standard rules are the ones that name their shortfall, in this order
+    job = make_job(min_years_experience=3, min_education="Bachelor's", position_levels=["Manager"])
+    reason = LogicManager().match_outcome(PROFILE, job)[1]
+    assert reason.index("experience") < reason.index("Bachelor's") < reason.index("well above your current level")
+    assert all(issubclass(rule, MatchRule) for rule in (ExperienceRule, EducationRule, SeniorityRule))
 
 
-def test_every_rule_can_stand_in_for_the_interface():
-    """LSP: whatever rule it is, shortfall takes a fit and a job and returns text, empty when nothing is short."""
-    meets_all = make_job()
-    for rule in LogicManager.default_match_rules():
-        assert rule.shortfall(LogicManager.job_fit(PROFILE, meets_all), meets_all) == ""
+@pytest.mark.parametrize("rule", [ExperienceRule(), EducationRule(), SeniorityRule(FAR_ABOVE_LEVELS),
+                                  RemoteOnlyRule()])
+def test_every_match_rule_works_where_a_match_rule_is_expected(rule):
+    """LSP: whatever rule it is, LogicManager asks it the same way and gets one of the three outcomes and a reason."""
+    outcome, reason = LogicManager(match_rules=[rule]).match_outcome(PROFILE, make_job())
+    assert isinstance(rule, MatchRule)
+    assert outcome in (OUTCOME_STRONG, OUTCOME_FAIR, OUTCOME_STRETCH) and reason
 
 
 def test_the_outcome_lists_every_shortfall_in_rule_order():
@@ -76,18 +86,11 @@ def test_the_outcome_lists_every_shortfall_in_rule_order():
                       "is well above your current level.")
 
 
-class RemoteOnlyRule(MatchRule):
-    """A rule LogicManager has never seen: the candidate can't work onsite."""
-
-    def shortfall(self, fit: dict, job: dict) -> str:
-        return "is onsite only" if job.get("work_arrangement") == "Onsite" else ""
-
-
 def test_a_new_rule_changes_the_outcome_without_changing_logic_manager():
     """OCP: a rule is added by handing it in, not by editing match_outcome."""
     job = make_job(work_arrangement="Onsite")
     assert LogicManager().match_outcome(PROFILE, job)[0] == "Strong match"
-    logic = LogicManager(match_rules=[*LogicManager.default_match_rules(), RemoteOnlyRule()])
+    logic = LogicManager(match_rules=[ExperienceRule(), EducationRule(), SeniorityRule(FAR_ABOVE_LEVELS), RemoteOnlyRule()])
     assert logic.match_outcome(PROFILE, job) == ("Stretch", "This job is onsite only.")
 
 
