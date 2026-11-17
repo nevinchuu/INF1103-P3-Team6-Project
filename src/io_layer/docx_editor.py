@@ -21,8 +21,10 @@ BULLET_INDENT_PT = 36  # usual indent of a bulleted list when the file doesn't s
 class DocxEditor:
     """Reads and writes the Word files behind tailored resumes."""
 
-    def write_resume_docx(self, resume: dict) -> bytes:
-        """Return a tailored resume as a Word file (bytes), in a plain one-column layout that hiring systems read well."""
+    def write_new(self, resume: dict) -> bytes:
+        """Return a tailored resume as a Word file (bytes), in a plain one-column layout that hiring systems read well.
+        The lengths of time after the dates are dropped first."""
+        self.__tidy_dates(resume)
         document = Document()
         for section in document.sections:
             section.top_margin = section.bottom_margin = Cm(1.8)
@@ -81,7 +83,7 @@ class DocxEditor:
         document.save(output)
         return output.getvalue()
 
-    def tidy_resume_dates(self, resume: dict) -> dict:
+    def __tidy_dates(self, resume: dict) -> dict:
         """Drop a length of time after the dates in a tailored resume (ai_manager.tailor_resume),
         e.g. "Sep 2024 - Feb 2025 (6 months)" -> "Sep 2024 - Feb 2025". Returns the same resume."""
         for section in resume["sections"]:
@@ -89,7 +91,7 @@ class DocxEditor:
                 entry["dates"] = DURATION.sub("", entry["dates"])
         return resume
 
-    def read_docx_paragraphs(self, path: str) -> list[dict]:
+    def read_paragraphs(self, path: str) -> list[dict]:
         """Return a Word resume's paragraphs (id, text, kind, editable, chars_per_line, ...) for tailoring it in place."""
         document = Document(path)
         section = document.sections[0]
@@ -125,7 +127,7 @@ class DocxEditor:
             indent_pt = indent.pt if indent is not None else (BULLET_INDENT_PT if is_bullet else 0)
             right_indent = paragraph.paragraph_format.right_indent
             width_pt = page_text_width - indent_pt - (right_indent.pt if right_indent is not None else 0)
-            chars_per_line = max(20, int(width_pt / (self.font_size_pt(paragraph) * AVERAGE_CHAR_WIDTH)))
+            chars_per_line = max(20, int(width_pt / (self.__font_size_pt(paragraph) * AVERAGE_CHAR_WIDTH)))
 
             paragraphs.append({
                 "id": position,
@@ -137,7 +139,7 @@ class DocxEditor:
             })
         return paragraphs
 
-    def font_size_pt(self, paragraph: Paragraph, default: float = 11) -> float:
+    def __font_size_pt(self, paragraph: Paragraph, default: float = 11) -> float:
         """A Word paragraph's font size in points: its first run's, else its style's (or a style it is based on)."""
         for run in paragraph.runs:
             if run.font.size is not None:
@@ -149,9 +151,10 @@ class DocxEditor:
             style = style.base_style
         return default
 
-    def find_layout_fixes(self, paragraphs: list[dict], edits: dict[int, str]) -> tuple[dict[int, str], list[str]]:
-        """Small layout clean-ups for a Word resume, e.g. dropping "(6 months)" after dates. Returns (fixes, notes)."""
-        fixes, durations, dated = {}, 0, 0
+    def find_layout_fixes(self, paragraphs: list[dict], edits: dict[int, str]) -> dict[int, str]:
+        """Small layout clean-ups for a Word resume, e.g. dropping "(6 months)" after dates. Returns the fixes:
+        paragraph id -> new text."""
+        fixes = {}
         has_entries = any(paragraph["kind"] == "entry" for paragraph in paragraphs)
         heading = ""
         for paragraph in paragraphs:
@@ -161,21 +164,13 @@ class DocxEditor:
                 heading = paragraph["text"]
             elif paragraph["kind"] == "entry" and DURATION.search(paragraph["text"]):
                 fixes[paragraph["id"]] = DURATION.sub("", paragraph["text"])
-                durations += 1
             elif paragraph["kind"] == "bullet" and has_entries and DATED_LIST_HEADING.search(heading):
                 match = YEAR_AT_END.match(paragraph["text"])
                 if match:
                     fixes[paragraph["id"]] = f"{match.group(1)}\t{match.group(2)}"
-                    dated += 1
-        notes = []
-        if durations:
-            notes.append("Tidied the layout: removed the length of time after the dates, e.g. \"(6 months)\".")
-        if dated:
-            notes.append(f"Tidied the layout: put the year of {dated} certification(s) or award(s) on the right, "
-                         f"like your other entries.")
-        return fixes, notes
+        return fixes
 
-    def write_edited_docx(self, path: str, edits: dict[int, str], fixes: dict[int, str] | None = None) -> bytes:
+    def write_edited(self, path: str, edits: dict[int, str], fixes: dict[int, str] | None = None) -> bytes:
         """Return a copy of a Word resume (bytes) with the edits and layout fixes applied; nothing else changes."""
         document = Document(path)
         paragraphs = document.paragraphs
@@ -189,7 +184,7 @@ class DocxEditor:
                 for run in paragraph.runs:
                     run.text = DURATION.sub("", run.text)
             elif template is not None:
-                self.make_entry_line(paragraph, template, *new_text.split("\t", 1))
+                self.__make_entry_line(paragraph, template, *new_text.split("\t", 1))
 
         for position, new_text in edits.items():
             paragraph = paragraphs[position]
@@ -207,14 +202,14 @@ class DocxEditor:
         document.save(output)
         return output.getvalue()
 
-    def word_preview(self, paragraphs: list[dict], edits: dict[int, str], fixes: dict[int, str]) -> list[dict]:
+    def preview(self, paragraphs: list[dict], edits: dict[int, str], fixes: dict[int, str]) -> list[dict]:
         """Each paragraph of a tailored Word resume for the web preview: new wording, and if changed or removed."""
         return [{**paragraph, "text": edits.get(paragraph["id"]) or fixes.get(paragraph["id"], paragraph["text"]),
                  "kind": "entry" if paragraph["id"] in fixes else paragraph["kind"],
                  "changed": paragraph["id"] in edits, "removed": edits.get(paragraph["id"]) == ""}
                 for paragraph in paragraphs]
 
-    def make_entry_line(self, paragraph: Paragraph, template: Paragraph, name: str, year: str) -> None:
+    def __make_entry_line(self, paragraph: Paragraph, template: Paragraph, name: str, year: str) -> None:
         """Turn a bullet like "Google Certificate, 2023" into a title-and-year line that looks like template."""
         space_before = paragraph.paragraph_format.space_before
         space_after = paragraph.paragraph_format.space_after
