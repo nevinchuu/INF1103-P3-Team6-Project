@@ -20,6 +20,9 @@
   --good: #047857;
   --good-bar: #10b981;
   --good-soft: #ecfdf5;
+  --fair: #b45309;            /* a fair match, a small boost (what-if page) */
+  --fair-soft: #fffbeb;
+  --band: #f3f4f6;            /* the top-list band on the what-if rank tracks */
   --error: #b91c1c;
   --error-soft: #fef2f2;
   --info: #374151;
@@ -51,6 +54,9 @@
     --good: #34d399;
     --good-bar: #10b981;
     --good-soft: #0f2a20;
+    --fair: #fbbf24;
+    --fair-soft: #2a2110;
+    --band: #1c1c1f;
     --error: #fca5a5;
     --error-soft: #2a1414;
     --info: #d4d4d8;
@@ -64,6 +70,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Anything a script hides with the hidden attribute stays hidden, even with a display style of its own (.btn) */
+[hidden] { display: none !important; }
 
 /* Keeps a focused field from scrolling under the sticky header */
 html { scroll-padding-top: 80px; }
@@ -400,6 +408,22 @@ details.optional .grid { margin-top: 16px; }
 .refine-head p { margin-top: 2px; }
 .refine-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 14px; }
 .refine-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.refine-note { margin: 0 0 16px; }
+
+/* Results page: "Top matches" with a Filters button that opens the search-again panel */
+.filters-fold { margin-top: 40px; }
+.filters-fold > summary.matches-head { list-style: none; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end; gap: 2px 12px; margin-bottom: 16px; cursor: pointer; }
+.filters-fold > summary::-webkit-details-marker { display: none; }
+.matches-head .section-title { margin: 0; grid-column: 1; }
+.matches-head .active-filters { grid-column: 1; }
+.matches-head .filters-btn { grid-column: 2; grid-row: 1 / span 2; }
+.filters-fold > summary:focus-visible { outline: none; }
+.filters-fold > summary:focus-visible .filters-btn { outline: 2px solid var(--text); outline-offset: 2px; }
+.filters-fold .when-open, .filters-fold[open] .when-closed { display: none; }
+.filters-fold[open] .when-open { display: inline; }
+.filters-fold[open] .filters-btn { border-color: var(--text); }
+.filters-fold .refine { margin-bottom: 20px; }
 .btn-ghost:is(a):hover { background: var(--accent-soft); color: var(--text); }
 .saved-note { margin: -4px 0 12px; }
 
@@ -408,6 +432,10 @@ details.optional .grid { margin-top: 16px; }
 .toolbar .field:first-child { flex: 1 1 240px; }
 .toolbar .field:nth-child(2) { flex: 0 1 200px; }
 .empty-filter { text-align: center; padding: 32px 0; }
+/* Results page: the sort sits on its own at the right; a sorted list hides the rank numbers (results.js) */
+.results-toolbar { justify-content: flex-end; margin-bottom: 12px; }
+.results-toolbar .field:first-child { flex: 0 1 200px; }
+.job-list.unranked .job-rank { display: none; }
 
 /* ---------- Tags ---------- */
 .tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
@@ -423,6 +451,14 @@ details.optional .grid { margin-top: 16px; }
 .card .tag { background: var(--surface); }
 .tag-good, .card .tag-good { background: var(--good-soft); color: var(--good); border-color: transparent; }
 .tag-via { font-weight: 400; opacity: 0.8; }
+/* Results page: the profile's and each job's skills a little bigger, so they read at a glance */
+.profile-card .tags, .job-card .tags { gap: 8px; }
+.profile-card .tag, .job-card .tag { padding: 6px 14px; font-size: 0.9rem; }
+
+/* Results page: close matches, after the jobs that fit every filter */
+.close-head { margin: 28px 0 12px; }
+.close-head h3 { margin: 0 0 2px; }
+.close-badge { font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--fair-soft); color: var(--fair); white-space: nowrap; }
 .plain-list { margin: 0; padding-left: 18px; color: var(--muted); font-size: 0.9375rem; }
 .plain-list li + li { margin-top: 2px; }
 
@@ -499,6 +535,12 @@ details.optional .grid { margin-top: 16px; }
 .eyebrow { font-size: 0.8125rem; font-weight: 500; color: var(--muted); margin-bottom: 8px; }
 .head-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .field-hint { margin-top: 6px; }
+/* A number box with its unit after it, read as one phrase: "up to [ 3 ] years of experience" */
+.input-suffix { display: flex; align-items: center; gap: 10px; }
+.input-suffix input { width: 6.5rem; flex: none; }
+.input-suffix span { color: var(--body); font-size: 0.9375rem; white-space: nowrap; }
+/* A field with a longer hint takes two columns when there is room for two (one column on a phone) */
+@media (min-width: 720px) { .grid .field-wide { grid-column: span 2; } }
 .check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .check-list li { position: relative; padding-left: 26px; }
 .check-list li::before { content: "✓"; position: absolute; left: 4px; color: var(--good); font-weight: 700; }
@@ -571,28 +613,151 @@ details.optional .grid { margin-top: 16px; }
   .paper { padding: 24px 20px; }
 }
 
-/* What-if page: the action buttons next to the page title, the skill checkboxes, and the result table */
+/* ---------- What-if page (whatif.html, whatif.js) ----------
+   Answer first: a verdict, then the numbers, then one row per job that got better, then the folded detail.
+   Green = strong match / moved up, amber = fair match, grey = stretch, red = moved down. */
 .page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-/* A checkbox inside a pill: undo the full-width text-box look every input gets above */
-.tag input[type="checkbox"] {
-  width: 14px; height: 14px; padding: 0; margin: 0 6px 0 0; border: 0; background: none;
-  vertical-align: -2px; accent-color: var(--text); flex: none;
+.whatif-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 16px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; width: fit-content; max-width: 100%; }
+.whatif-tabs [role="tab"] { font: inherit; font-size: 0.9rem; font-weight: 600; padding: 8px 16px; border-radius: 7px; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.whatif-tabs [role="tab"][aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow), 0 0 0 1px var(--border); }
+.whatif-tabs [role="tab"]:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.whatif-panel { margin-bottom: 20px; }
+.whatif-panel h2 { margin-bottom: 4px; }
+.whatif-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; margin-top: 18px; }
+.whatif-controls .field { margin: 0; }
+.whatif-controls select { width: auto; min-width: 12rem; }
+
+/* Skill picks: a checkbox pill with the skill's own effect ("+3 strong") and how many jobs ask for it */
+.picks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.pick { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--text); font-size: 0.875rem; cursor: pointer; margin: 0; font-weight: 500; }
+.pick input[type="checkbox"] { width: 15px; height: 15px; margin: 0; padding: 0; accent-color: var(--good); flex: none; }
+.pick:has(input:checked) { background: var(--good-soft); border-color: var(--good); }
+.pick:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
+.pick .impact { font-size: 0.72rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--good-soft); color: var(--good); font-variant-numeric: tabular-nums; }
+.pick:has(input:checked) .impact { background: var(--surface); }
+.pick .impact.zero { background: var(--surface-2); color: var(--muted); font-weight: 500; }
+.pick .count { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.more-picks { margin-top: 10px; }
+.more-picks > summary, .extra-skill > summary, .limit-picks > summary, .others > summary, .table-fold > summary {
+  cursor: pointer; font-size: 0.875rem; font-weight: 600; color: var(--text); width: fit-content; }
+.extra-skill, .limit-picks { margin-top: 16px; }
+.extra-skill .field { margin-top: 10px; max-width: 420px; }
+.limit-picks > p { margin: 8px 0 0; }
+
+/* Steps: 1-5 as a segmented control (radio buttons) */
+.steps-field { border: 0; padding: 0; margin: 0; }
+.steps-field legend { font-size: 0.875rem; font-weight: 600; color: var(--text); margin-bottom: 6px; padding: 0; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-control); overflow: hidden; }
+.seg label { margin: 0; }
+.seg input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.seg span { display: grid; place-items: center; width: 40px; height: 38px; border-right: 1px solid var(--border); background: var(--surface);
+  color: var(--text); cursor: pointer; font-variant-numeric: tabular-nums; }
+.seg label:last-child span { border-right: 0; }
+.seg input:checked + span { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.seg input:focus-visible + span { outline: 2px solid var(--text); outline-offset: -4px; }
+
+/* The answer */
+.whatif-result { display: grid; gap: 18px; scroll-margin-top: 80px; }
+.whatif-result > * { min-width: 0; }
+.section-label { margin: 4px 0 0; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.verdict { display: grid; gap: 8px; padding: 16px 18px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); }
+.verdict.v-high { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.verdict.v-some { background: var(--fair-soft); border-color: color-mix(in srgb, var(--fair) 40%, transparent); }
+.verdict-badge { width: fit-content; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 10px;
+  border-radius: 999px; background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.v-high .verdict-badge { color: var(--good); border-color: var(--good); }
+.v-some .verdict-badge { color: var(--fair); border-color: var(--fair); }
+.verdict-text { margin: 0; font-size: 1.15rem; line-height: 1.45; color: var(--text); max-width: 62ch; }
+.verdict-text b { font-weight: 700; }
+
+.whatif-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.whatif-tile { display: grid; gap: 2px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.whatif-tile .num { font-size: 1.8rem; font-weight: 700; line-height: 1.1; color: var(--text); font-variant-numeric: tabular-nums; }
+.whatif-tile.good .num { color: var(--good); }
+.whatif-tile .what { font-size: 0.875rem; color: var(--body); }
+
+/* One row per job, so nothing crosses however many jobs there are. The track runs from #1 (left) to the last
+   rank; hollow dot = rank now, filled dot = rank after, shaded = the top list */
+.move-list { list-style: none; margin: 0; padding: 0; }
+.mrow { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 6px 20px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.mlabel { min-width: 0; }
+.mtitle { margin: 0; display: flex; gap: 8px; align-items: baseline; min-width: 0; color: var(--text); font-weight: 600; font-size: 0.9rem; }
+.mtitle .r { flex: none; min-width: 2.5ch; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.mtitle .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mtitle .mco { color: var(--muted); font-weight: 400; }
+.mmeta { margin: 2px 0 0; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 0.78rem; color: var(--muted); }
+/* Rows in the top list say their place in words ("1st"); the meta line lines up under the title */
+.mrow.ranked .mtitle .r { min-width: 3.4ch; font-weight: 600; }
+.mrow.ranked .mmeta { padding-left: calc(3.4ch + 8px); }
+.mmeta .best { padding: 0 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; background: var(--good-soft); color: var(--good); }
+.mmeta .pay { color: var(--body); font-variant-numeric: tabular-nums; }
+.group-head { margin: 14px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: 0.72rem;
+  font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.move-axis .scale-words { display: flex; justify-content: space-between; }
+/* What the answer is based on, and the skills already had */
+.based-on { margin: -4px 0 10px; font-size: 0.9rem; color: var(--body); }
+.based-on .section-label { margin-right: 6px; }
+/* A plan: the other goal in one line, and the job detail folded under it */
+.compare-line { margin: 0; font-size: 0.9rem; color: var(--body); padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-control); }
+.more-detail > summary { cursor: pointer; font-size: 0.875rem; font-weight: 600; color: var(--text); width: fit-content; }
+.whatif-result-detail { display: grid; gap: 18px; margin-top: 14px; }
+.whatif-result-detail > * { min-width: 0; }
+/* A typed skill: the box and its Add button on one row */
+.add-row { display: flex; gap: 8px; margin-top: 10px; max-width: 420px; }
+.add-row input { flex: 1; min-width: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.seg-wide span { width: auto; padding: 0 14px; white-space: nowrap; }
+.stair .bar.money { background: var(--fair); }
+.mmeta .upby { color: var(--good); font-weight: 600; }
+.mmeta .downby { color: var(--error); font-weight: 600; }
+.mmeta .newtop { color: var(--good); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+.track { position: relative; height: 22px; }
+.track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); }
+.track .zone { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: var(--band); }
+.track .move { position: absolute; top: calc(50% - 2px); height: 4px; border-radius: 2px; }
+.track .move.up { background: var(--good); }
+.track .move.down { background: var(--error); }
+.track .pt { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%, -50%); }
+.track .pt.before { background: var(--surface); border: 2px solid var(--muted); }
+.pt.o-strong, .key-dot.o-strong { background: var(--good); }
+.pt.o-fair, .key-dot.o-fair { background: var(--fair); }
+.pt.o-stretch, .key-dot.o-stretch { background: var(--muted); }
+.move-axis { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 0 20px; font-size: 0.72rem; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.move-axis .scale { position: relative; height: 16px; }
+.move-axis .scale span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.no-moves { margin: 12px 0 0; color: var(--muted); }
+.others { margin-top: 12px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-control); }
+.others > summary { width: auto; font-weight: 500; color: var(--body); }
+.others > summary .show { font-weight: 600; color: var(--text); text-decoration: underline; margin-left: 6px; }
+.others .move-list { margin-top: 8px; }
+.whatif-key { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.8rem; color: var(--muted); }
+.whatif-key span { display: inline-flex; align-items: center; gap: 6px; }
+.key-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.key-dot.before { border: 2px solid var(--muted); }
+.key-zone { width: 16px; height: 10px; border-radius: 3px; background: var(--band); border: 1px solid var(--border); display: inline-block; }
+.table-fold .table-scroll { overflow-x: auto; }
+
+/* The plan as a staircase: strong matches now, then after each step */
+.stairs-scroll { overflow-x: auto; }
+/* Columns line up at the top, so every bar's base sits on the same line however long the caption under it is */
+.stairs { list-style: none; margin: 0; padding: 26px 0 0; display: flex; align-items: flex-start; gap: 28px; min-width: min-content; }
+.stair { position: relative; display: grid; justify-items: center; align-content: start; gap: 4px; width: 112px; flex: none; text-align: center; }
+.stair + .stair::before { content: "→"; position: absolute; left: -22px; top: 66px; color: var(--muted); }
+.stair .bar-zone { height: 150px; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.stair .bar { position: relative; width: 52px; border-radius: 8px 8px 3px 3px; background: var(--good); }
+.stair .bar.now { background: var(--muted); }
+.stair .val { position: absolute; top: -24px; left: 0; right: 0; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.stair .stair-skill { font-weight: 600; color: var(--text); font-size: 0.9rem; }
+.stair .stair-adds { font-size: 0.8rem; font-weight: 600; color: var(--good); }
+.stair .stair-adds.none { color: var(--muted); font-weight: 500; }
+@media (max-width: 560px) {
+  .mrow, .move-axis { grid-template-columns: minmax(0, 1fr); }
+  .move-axis > span:first-child { display: none; }
+  .stair { width: 96px; }
 }
-.skill-picks { margin-bottom: 16px; }
-
-/* What-if controls: one per row. Side by side, a column was narrower than its own dropdown, so
-   "Roadmap: Best-paid jobs first" was cut off mid-word with no way to read it. */
-.whatif-grid { grid-template-columns: 1fr; gap: 16px; max-width: 540px; }
-.whatif-grid select, .whatif-grid input { width: 100%; }
-.whatif-grid .muted.small { margin-top: 6px; }
-
-/* The skill list folds away once there is an answer to read, and opens again on a click */
-.skill-pick-list { margin-bottom: 16px; }
-.skill-pick-list > summary { cursor: pointer; padding: 6px 0; }
-.skill-pick-list[open] > summary { margin-bottom: 10px; }
-.skill-pick-list .skill-picks { margin-bottom: 0; }
-label.tag { cursor: pointer; display: inline-flex; align-items: center; margin: 0; font-weight: 500; }
-label.tag:has(input:checked) { background: var(--good-soft); color: var(--good); border-color: transparent; }
 .plain-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
 .plain-table th, .plain-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border, #e5e7eb); vertical-align: top; }
 .plain-table th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
@@ -606,7 +771,7 @@ label.tag:has(input:checked) { background: var(--good-soft); color: var(--good);
 .tracker { margin-bottom: 20px; }
 .tracker-stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .tracker-stage {
-  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px;
+  padding: 0;  /* the filter button inside fills the tile (below) */
   border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-2);
 }
 .tracker-stage.has-jobs { background: var(--surface); }
@@ -614,4 +779,17 @@ label.tag:has(input:checked) { background: var(--good-soft); color: var(--good);
 .tracker-stage:not(.has-jobs) .tracker-count { color: var(--muted); }
 .tracker-label { font-size: 0.75rem; color: var(--muted); }
 .tracker-hint { margin: 8px 0 0; }
-@media (max-width: 480px) { .tracker-stages { gap: 4px; } .tracker-stage { padding: 8px 2px; } .tracker-label { font-size: 0.6875rem; } }
+/* Each stage is a filter button (saved.js): it fills its tile, so the whole tile is the target */
+.tracker-button {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; width: 100%; padding: 10px 6px;
+  font: inherit; color: inherit; background: none; border: 0; border-radius: inherit; cursor: pointer;
+}
+.tracker-stage.has-jobs:hover { border-color: color-mix(in srgb, var(--border), var(--text) 30%); }
+.tracker-button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.tracker-button:disabled { cursor: default; }
+.tracker-stage:has([aria-pressed="true"]) { border-color: var(--text); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--text); }
+.tracker-stage:has([aria-pressed="true"]) .tracker-label { color: var(--text); font-weight: 600; }
+.status-note { color: var(--body); }
+.link-button { padding: 0; font: inherit; color: var(--text); background: none; border: 0; text-decoration: underline; cursor: pointer; }
+.link-button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 2px; }
+@media (max-width: 480px) { .tracker-stages { gap: 4px; } .tracker-button { padding: 8px 2px; } .tracker-label { font-size: 0.6875rem; } }
