@@ -350,3 +350,366 @@ def test_the_job_portal_being_down_is_reported(tmp_path):
     progress = down.client.get(f"/progress/{search_id}").get_json()
     assert progress["status"] == "error" and "Could not get any job listings from MyCareersFuture" in progress["error"]
     assert down.data.read_saved_jobs() == []
+
+
+def test_logging_is_set_up_without_a_writable_log_file(monkeypatch, tmp_path, web):
+    web_io = web.io
+    monkeypatch.setattr(io_manager, "LOG_PATH", str(tmp_path / "file" / "x.log"))
+    (tmp_path / "file").write_text("a file where the log folder should be")
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+    try:
+        web_io.start_up("127.0.0.1:5000")  # must not raise
+    finally:
+        for handler in root.handlers[:]:
+            if handler not in handlers_before:
+                root.removeHandler(handler)
+
+
+def test_logging_writes_info_to_the_log_file_and_opens_it_once(monkeypatch, tmp_path, web):
+    """A web search leaves a record of how many listings it found and how many the AI analysed."""
+    log_path = tmp_path / "logs" / "job_matcher.log"
+    monkeypatch.setattr(io_manager, "LOG_PATH", str(log_path))
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+    try:
+        web.io.start_up("127.0.0.1:5000")
+        web.io.start_up("127.0.0.1:5000")  # what WebApp.run calls; must not open a second handler
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)
+                         and h.baseFilename == os.path.abspath(str(log_path))]
+        assert len(file_handlers) == 1, f"{len(file_handlers)} handlers on the same file"
+        logging.info("event=search stage=jobs listings_found=20 listings_analysed=20")
+        file_handlers[0].flush()
+        assert "listings_found=20 listings_analysed=20" in log_path.read_text(encoding="utf-8")
+    finally:
+        for handler in root.handlers[:]:
+            if handler not in handlers_before:
+                handler.close()
+                root.removeHandler(handler)
+
+
+def test_a_failed_save_still_shows_the_results_with_a_warning(web):
+    web.storage.fail_writes = True
+    search_id = search(web.client)
+    page = web.client.get(f"/results/{search_id}").get_data(as_text=True)
+    assert all(title in page for title in LISTING_TITLES) and "could not be saved" in page.lower()
+
+
+def test_update_matches_reuses_the_profile_and_applies_new_filters(web):
+    search_id = search(web.client)
+    reads_before = sum(task == "candidate_profile" for task, _ in ai_requests)
+    reply = web.client.post(f"/results/{search_id}/update", data={**DEFAULT_FORM, "show": "10"})
+    assert reply.status_code == 302 and "search=" in reply.headers["Location"]
+    assert sum(task == "candidate_profile" for task, _ in ai_requests) == reads_before  # the resume was not read again
+    bad = web.client.post(f"/results/{search_id}/update", data={**DEFAULT_FORM, "min_salary": "lots"})
+    assert bad.status_code == 200 and "must be a whole number" in bad.get_data(as_text=True)
+
+
+def test_update_matches_needs_a_finished_search(tmp_path):
+    web = Web(str(tmp_path), holding=True)
+    assert web.client.post("/results/nope/update", data=DEFAULT_FORM).status_code == 404
+    running = web.client.post("/search", data=DEFAULT_FORM).get_json()["search_id"]
+    assert web.client.post(f"/results/{running}/update", data=DEFAULT_FORM).status_code == 404
+
+
+def test_pages_for_a_running_or_unknown_search_redirect_or_404(tmp_path):
+    web = Web(str(tmp_path))
+    search(web.client)
+    web.holding = True
+    running_search = web.client.post("/search", data=DEFAULT_FORM).get_json()["search_id"]
+    running_tailor = web.client.post("/tailor", data={"job_url": job_link(0), "resume_choice": SAMPLE_RESUME}).get_json()["search_id"]
+    assert web.client.get(f"/results/{running_search}").status_code == 302
+    assert web.client.get(f"/whatif/{running_search}").status_code == 302
+    reply = web.client.get(f"/tailored/{running_tailor}")
+    assert reply.status_code == 302 and f"job_url={job_link(0)}&search={running_tailor}" in reply.headers["Location"]
+    assert web.client.get(f"/tailored/{running_tailor}/download").status_code == 404
+    assert web.client.get("/results/nope").status_code == 404
+    assert web.client.get("/tailored/nope").status_code == 404
+    assert web.client.get("/tailored/nope/download").status_code == 404
+    assert web.client.get("/progress/nope").status_code == 404
+
+
+def test_a_cancelled_search_stops_and_keeps_nothing(tmp_path):
+    web = Web(str(tmp_path), holding=True)
+    task_id = web.client.post("/search", data=DEFAULT_FORM).get_json()["search_id"]
+    assert web.client.post(f"/search/{task_id}/cancel").get_json() == {"ok": True}
+    web.run_held_work()
+    assert web.client.get(f"/progress/{task_id}").get_json()["status"] == "cancelled"
+    assert web.data.read_saved_jobs() == [] and web.io.search_results(task_id) == {}
+
+
+def test_tailor_needs_a_known_job_and_a_usable_resume(web):
+    assert web.client.post("/tailor", data={"job_url": "https://x/none", "resume_choice": SAMPLE_RESUME}).status_code == 404
+    search(web.client)
+    reply = web.client.post("/tailor", data={"job_url": job_link(0), "resume_choice": "../.env"})
+    assert reply.status_code == 400
+
+
+def test_saved_jobs_can_be_searched_with_a_keyword(web):
+    search(web.client)
+    page = web.client.get("/saved?q=teller").get_data(as_text=True)
+    assert "Bank Teller" in page and "Data Analyst" not in page
+
+
+def test_removing_a_job_that_is_not_saved_changes_nothing(web):
+    search(web.client)
+    assert web.client.post("/saved/remove", data={"job_url": "https://x/none"}).status_code == 302
+    assert len(web.data.read_saved_jobs()) == 3
+
+
+def test_the_app_is_built_from_the_environment_and_starts_with_the_database_down(monkeypatch):
+    monkeypatch.setattr(postgres_storage, "POOL_TIMEOUT_SECONDS", 0.2)  # conftest points DATABASE_URL at nothing
+    flask_app = web_app.WebApp.create_app()
+    page = flask_app.test_client().get("/saved")
+    assert page.status_code == 200 and "Could not open your saved jobs file" in page.get_data(as_text=True)
+
+
+# ---------- the what-if page ----------
+
+def test_the_whatif_page_lists_the_skills_to_learn(web):
+    search_id = search(web.client)
+    page = web.client.get(f"/whatif/{search_id}").get_data(as_text=True)
+    assert "What if I learned" in page and 'value="Tableau"' in page and 'value="SQL"' not in page
+    # Two tabs (shown by whatif.js), and each skill with its own effect and how many jobs ask for it
+    assert 'role="tablist"' in page and "Try a skill" in page and "Plan what to learn" in page
+    assert re.search(r'class="impact( zero)?">\+\d+<', page) and re.search(r'asked for in \d+ jobs?"', page)
+    assert "Get a learning plan" in page and ">Rank higher<" in page and ">Earn more<" in page
+    assert 'id="result"' not in page  # nothing asked yet, so no answer
+
+
+def test_the_results_page_links_to_the_whatif_page(web):
+    search_id = search(web.client)
+    assert f"/whatif/{search_id}" in web.client.get(f"/results/{search_id}").get_data(as_text=True)
+
+
+def test_testing_a_skill_shows_how_the_jobs_move(web):
+    search_id = search(web.client)
+    page = web.client.post(f"/whatif/{search_id}", data={"mode": "test", "skill": ["Tableau"], "steps": "3", "top_n": "2"})
+    text = page.get_data(as_text=True)
+    assert page.status_code == 200 and "Learning <b>Tableau</b>" in text and "Newly covered" in text
+    assert re.search(r'class="verdict v-(high|some|none)">\s*<span class="verdict-badge">(Big boost|Small boost|No change)<', text)
+    assert 'id="result"' in text and 'class="whatif-tiles"' in text and "Your top 2" in text
+    assert re.search(r'class="r">1st<', text) and "Best match" in text  # the top list, in words, best first
+    assert "checked" in text  # the skill stays ticked for the next try
+
+
+def test_a_roadmap_shows_its_steps_and_the_result(web):
+    search_id = search(web.client)
+    text = web.client.post(f"/whatif/{search_id}", data={"mode": "greedy", "steps": "1", "top_n": "5"}).get_data(as_text=True)
+    assert 'class="stairs"' in text and "How your jobs move" in text
+    assert text.count('class="stair"') == 2 and "Learning <b>" in text  # "Now", then the one step
+    assert 'aria-selected="true">Plan what to learn' in text  # the plan's tab opens
+
+
+@pytest.mark.parametrize("form, message", [
+    ({"mode": "test", "steps": "3", "top_n": "5"}, "at least one skill"),
+    ({"mode": "test", "skill": ["Cobol"], "steps": "3", "top_n": "5"}, "None of these jobs asks for"),
+    ({"mode": "test", "skill": ["Tableau"], "extra_skills": "tableau", "steps": "3", "top_n": "5"}, "more than once"),
+    ({"mode": "greedy", "skill": ["Tableau"], "steps": "many", "top_n": "5"}, "whole numbers"),
+    ({"mode": "test", "skill": ["Tableau"], "steps": "3", "top_n": ""}, "whole number"),
+    ({"mode": "greedy", "steps": "99", "top_n": "5"}, "1 to 10 skills"),
+    ({"mode": "nonsense", "steps": "3", "top_n": "5"}, "Unknown planner"),
+    ({"mode": "test", "skill": ["Tableau"], "steps": "3", "top_n": "0"}, "at least 1 job"),
+])
+def test_bad_whatif_forms_get_a_message_not_an_error(web, form, message):
+    search_id = search(web.client)
+    reply = web.client.post(f"/whatif/{search_id}", data=form)
+    assert reply.status_code == 200 and message in reply.get_data(as_text=True)
+
+
+def test_the_whatif_page_needs_a_finished_search(tmp_path):
+    web = Web(str(tmp_path), holding=True)
+    assert web.client.get("/whatif/nope").status_code == 404
+    assert web.client.post("/whatif/nope", data={"mode": "test"}).status_code == 404
+    assert web.client.post("/whatif/nope", data={"mode": "greedy"}).status_code == 404  # a roadmap too
+    running = web.client.post("/search", data=DEFAULT_FORM).get_json()["search_id"]
+    assert web.client.get(f"/whatif/{running}").status_code == 302  # the search page follows its progress
+    web.client.post(f"/search/{running}/cancel")
+    assert web.client.get(f"/whatif/{running}").status_code == 404  # a cancelled search has nothing to simulate
+
+
+def test_the_whatif_page_says_so_when_there_is_nothing_to_learn(web, monkeypatch):
+    def has_every_skill(record: dict, task: str) -> dict:
+        answer = fake_ai(record, task)
+        if task == "candidate_profile":
+            answer["core_skills"].append("Tableau")
+        if task == "job_requirements":
+            for job in answer["jobs"]:
+                job["skill_matches"] = [{"job_skill": skill, "candidate_skill": skill} for skill in job["required_skills"]]
+        return answer
+    monkeypatch.setattr(web.ai, "_responder", has_every_skill)
+    search_id = search(web.client)
+    page = web.client.get(f"/whatif/{search_id}").get_data(as_text=True)
+    assert "Nothing to learn" in page
+
+
+# ---------- a status and note on a saved job ----------
+
+def update(web, **form):
+    return web.client.post("/saved/update", data={"job_url": job_link(0), **form})
+
+
+def test_a_saved_job_gets_a_status_and_a_note_that_the_page_shows(web):
+    search(web.client)
+    assert update(web, status="Applied", note="Phone screen Friday").status_code == 302
+    page = web.client.get("/saved").get_data(as_text=True)
+    assert "Phone screen Friday" in page and 'class="status-badge">Applied' in page
+    job = web.data.get_saved_job(job_link(0))
+    assert job["status"] == "Applied" and job["note"] == "Phone screen Friday"
+
+
+def test_a_bad_status_a_long_note_and_an_unsaved_job_are_messages(web):
+    search(web.client)
+    assert "Status must be one of" in web.client.post("/saved/update", data={"job_url": job_link(0), "status": "Hired"},
+                                                      follow_redirects=True).get_data(as_text=True)
+    long_note = web.client.post("/saved/update", data={"job_url": job_link(0), "note": "x" * 501}, follow_redirects=True)
+    assert "at most 500 characters" in long_note.get_data(as_text=True)
+    gone = web.client.post("/saved/update", data={"job_url": "https://x/none", "status": "Applied"}, follow_redirects=True)
+    assert "no longer saved" in gone.get_data(as_text=True)
+    removed_twice = web.client.post("/saved/remove", data={"job_url": "https://x/none"}, follow_redirects=True)
+    assert "no longer saved" in removed_twice.get_data(as_text=True)
+
+
+# The Saved page says what changed, keeps the filter and reopens the changed job; it shows no text from its address
+def test_saved_page_feedback_keeps_the_filter(web):
+    search(web.client)
+    reply = web.client.post("/saved/update", data={"job_url": job_link(0), "status": "Applied", "q": "analyst"})
+    assert "q=analyst" in reply.headers["Location"] and "outcome=updated" in reply.headers["Location"]
+    page = web.client.get(reply.headers["Location"]).get_data(as_text=True)
+    assert "Saved your changes." in page and 'open id="changed-job"' in page
+    assert "Removed the job." in web.client.post("/saved/remove", data={"job_url": job_link(1)},
+                                                 follow_redirects=True).get_data(as_text=True)
+
+
+def test_an_update_that_cannot_be_written_says_so(web):
+    search(web.client)
+    web.storage.fail_writes = True
+    page = web.client.post("/saved/update", data={"job_url": job_link(0), "status": "Applied"}, follow_redirects=True)
+    assert "Could not update your saved jobs file" in page.get_data(as_text=True)
+
+
+def test_updating_with_no_changes_keeps_the_job_as_it_was(web):
+    search(web.client)
+    before = web.data.read_saved_jobs()
+    assert web.client.post("/saved/update", data={"job_url": job_link(0)}).status_code == 302
+    assert web.data.read_saved_jobs() == before
+
+
+# A search where the AI skipped some listings still shows the rest, and says some matches may be missing
+def test_a_partly_failed_search_says_what_it_left_out(web, monkeypatch):
+    def first_listing_only(record: dict, task: str) -> dict:
+        answer = fake_ai(record, task)
+        if task == "job_requirements":
+            answer["jobs"] = answer["jobs"][:1]
+        return answer
+    monkeypatch.setattr(web.ai, "_responder", first_listing_only)
+    search_id = search(web.client)
+    page = web.client.get(f"/results/{search_id}").get_data(as_text=True)
+    assert "2 of 3 listings could not be analysed" in page and "Data Analyst" in page
+
+
+# A search's id can't open a tailoring page and a tailoring run's id can't open a results page: 404, not a crash
+def test_a_task_id_of_the_other_kind_is_not_found(web):
+    search_id = search(web.client)
+    tailor_id = web.client.post("/tailor", data={"job_url": job_link(0), "resume_choice": SAMPLE_RESUME}).get_json()["search_id"]
+    assert web.client.get(f"/results/{search_id}").status_code == 200
+    for path in [f"/tailored/{search_id}", f"/tailored/{search_id}/download", f"/results/{tailor_id}",
+                 f"/whatif/{tailor_id}"]:
+        assert web.client.get(path).status_code == 404, path
+    assert web.client.post(f"/results/{tailor_id}/update", data=DEFAULT_FORM).status_code == 404
+
+
+# The Saved page still opens when a saved job's skill lists are the wrong type
+def test_the_saved_page_survives_a_badly_typed_saved_job(web):
+    web.storage.insert({"job_url": job_link(5), "title": "Odd Job", "required_skills": None, "matched_skills": "abc"})
+    page = web.client.get("/saved")
+    assert page.status_code == 200 and "Odd Job" in page.get_data(as_text=True)
+
+
+# DNS rebinding: a website that points its own name at 127.0.0.1 sends its name as the Host header; only the app's
+# own names are answered, so that website can't read the pages
+def test_only_the_apps_own_host_names_are_answered(web):
+    assert web.client.get("/saved", base_url="http://attacker.example").status_code == 400
+    assert web.client.get("/saved", base_url="http://attacker.example:5000").status_code == 400
+    for own in ("http://127.0.0.1:5000", "http://localhost:5000", "http://localhost"):
+        assert web.client.get("/saved", base_url=own).status_code == 200, own
+
+
+# Cross-site request forgery: a POST another website makes the browser send is refused and changes nothing; the
+# app's own pages (same origin), and clients that aren't browsers, still work
+@pytest.mark.parametrize("headers", [{"Origin": "https://attacker.example"},
+                                     {"Sec-Fetch-Site": "cross-site"},
+                                     {"Sec-Fetch-Site": "same-site", "Origin": "http://localhost:3000"},
+                                     {"Origin": "null"}])
+def test_a_post_from_another_website_is_refused(web, headers):
+    search(web.client)
+    assert web.client.post("/saved/clear", headers=headers).status_code == 403
+    assert web.client.post("/search", data=DEFAULT_FORM, headers=headers).status_code == 403
+    assert len(web.data.read_saved_jobs()) == 3
+
+
+def test_a_post_from_the_apps_own_page_still_works(web):
+    search(web.client)
+    own_page = {"Origin": "http://localhost", "Sec-Fetch-Site": "same-origin"}
+    assert web.client.post("/saved/clear", headers=own_page).status_code == 302
+    assert web.data.read_saved_jobs() == []
+    assert web.client.get("/saved", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200  # reading is fine
+
+
+# The Saved page shows the application tracker: saved jobs by stage, and strong matches not applied to yet
+def test_the_saved_page_shows_the_application_tracker(web):
+    search(web.client)
+    web.client.post("/saved/update", data={"job_url": job_link(0), "status": "Applied"})
+    page = web.client.get("/saved").get_data(as_text=True)
+    assert 'aria-label="Application tracker"' in page
+    counts = dict(re.findall(r'tracker-count">(\d+)</span><span class="tracker-label">(\w+)<', page)[i][::-1]
+                  for i in range(5))
+    assert counts == {"Saved": "2", "Applied": "1", "Interviewing": "0", "Offer": "0", "Rejected": "0"}
+    assert "2 strong matches are saved but not applied to yet" in page
+
+
+# Each tracker stage is a filter button for saved.js: one per status, off at first, and a stage with no jobs can't be
+# picked. Every saved job card says its status, so the script can show one stage's jobs.
+def test_the_tracker_stages_filter_the_saved_jobs_by_status(web):
+    search(web.client)
+    web.client.post("/saved/update", data={"job_url": job_link(0), "status": "Applied"})
+    page = web.client.get("/saved").get_data(as_text=True)
+    buttons = re.findall(r'<button class="tracker-button" type="button" data-status="(\w+)" aria-pressed="false"'
+                         r'[^>]*?( disabled)?>', page)
+    assert buttons == [("Saved", ""), ("Applied", ""), ("Interviewing", " disabled"), ("Offer", " disabled"),
+                       ("Rejected", " disabled")]
+    assert sorted(re.findall(r'data-status="(\w+)"\s+data-text', page)) == ["Applied", "Saved", "Saved"]
+    assert 'id="status-note"' in page and 'id="status-show-all"' in page
+    results = web.client.get(f"/results/{search(web.client)}").get_data(as_text=True)
+    assert "data-status" not in results  # the results page has no tracker to filter by
+
+# The Tailor link on the results page names the search the job came from, the Tailor page sends it back, and the
+# job is found in that search; the Saved page's link has none
+def test_the_tailor_link_carries_the_search_the_job_came_from(web):
+    search_id = search(web.client)
+    results = web.client.get(f"/results/{search_id}").get_data(as_text=True)
+    assert f"from_search={search_id}" in results and "from_search=" not in web.client.get("/saved").get_data(as_text=True)
+    page = web.client.get(f"/tailor?job_url={job_link(0)}&from_search={search_id}").get_data(as_text=True)
+    assert f'name="from_search" value="{search_id}"' in page and "Data Analyst" in page
+    web.storage.fail_reads = True  # the saved jobs can't be opened, but the search still has the job
+    reply = web.client.post("/tailor", data={"job_url": job_link(1), "resume_choice": SAMPLE_RESUME,
+                                             "from_search": search_id})
+    assert web.client.get(f"/progress/{reply.get_json()['search_id']}").get_json()["status"] == "done"
+
+
+def test_a_tailored_resume_is_downloaded_under_the_resume_and_job_names(web):
+    search(web.client)
+    tailor_id = web.client.post("/tailor", data={"job_url": job_link(0), "resume_choice": SAMPLE_RESUME}).get_json()["search_id"]
+    download = web.client.get(f"/tailored/{tailor_id}/download")
+    assert "sample_resume_fintech_Data_Analyst.docx" in download.headers["Content-Disposition"]
+    assert os.path.exists(os.path.join(web.folder, "resumes", "tailored", "sample_resume_fintech_Data_Analyst.docx"))
+
+
+def test_a_cancelled_or_failed_tailoring_run_goes_back_to_the_tailor_page(tmp_path):
+    web = Web(str(tmp_path))
+    search(web.client)
+    web.holding = True
+    tailor_id = web.client.post("/tailor", data={"job_url": job_link(0), "resume_choice": SAMPLE_RESUME}).get_json()["search_id"]
+    web.client.post(f"/search/{tailor_id}/cancel")
+    reply = web.client.get(f"/tailored/{tailor_id}")
+    assert reply.status_code == 302 and "search=" not in reply.headers["Location"]
