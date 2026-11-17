@@ -1,32 +1,47 @@
 {# Shared job list, used by results.html and saved.html:
    {% from "_jobs.html" import job_list %} ... {{ job_list(jobs) }}
-   saved=True leaves out the rank and adds a Remove button and the data-* values saved.js sorts by.
+   saved=True leaves out the rank and adds a Remove button and the data-* values saved.js sorts and filters by.
+   Every card carries data-order, data-posted, data-salary, data-match and data-outcome (2 Strong, 1 Partial, 0
+   missing a requirement), which saved.js and results.js sort by.
+   start is the first rank shown, so a second list (the results page's close matches) carries on the numbering.
+   search_id (a finished search's id) is added to the Tailor link so the job is found in that search.
+   The jobs come from IOManager, which adds the texts shown here (title_text, location_text, salary_text,
+   job_types_text, experience_text, and same_name on each matched skill).
    Facts the portal doesn't give ("Not specified") are left out. #}
 
-{% macro job_list(jobs, saved=False) %}
+{# A match outcome as the pages say it. The stored names ("Fair match", "Stretch") stay as they are: saved jobs and
+   the ranking rules use them; only the words a first-time user reads change. short=True for tight spaces. #}
+{% macro outcome_label(outcome, short=False) %}{{ ({"Strong match": "Strong", "Fair match": "Partial", "Stretch": "Missing a requirement"} if short else {"Fair match": "Partial match", "Stretch": "Missing a requirement"}).get(outcome, outcome) }}{% endmacro %}
+
+{% macro job_list(jobs, saved=False, statuses=[], open_url='', keyword='', search_id='', start=1) %}
 <ol class="job-list{% if saved %} job-list-saved{% endif %}" id="job-list">
   {% for job in jobs %}
   {% set required = job.required_skills | length %}
   {% set matched = job.matched_skills | length %}
-  <li{% if saved %} data-order="{{ loop.index }}"
+  <li data-order="{{ loop.index }}"
+      data-posted="{{ job.posted_date or '' }}"
       data-salary="{{ job.max_salary or job.min_salary or 0 }}"
       data-match="{{ (matched / required) if required else 0 }}"
+      data-outcome="{{ {'Strong match': 2, 'Fair match': 1}.get(job.match_outcome, 0) }}"{% if saved %}
+      data-status="{{ job.status or statuses[0] }}"
       data-text="{{ [job.title or '', job.company or '', job.location or ''] | join(' ') | lower }}"{% endif %}>
-    <details class="job-card">
+    <details class="job-card"{% if open_url and job.job_url == open_url %} open id="changed-job"{% endif %}>
       <summary>
-        {% if not saved %}<span class="job-rank">{{ loop.index }}</span>{% endif %}
+        {% if not saved %}<span class="job-rank">{{ loop.index + start - 1 }}</span>{% endif %}
         <span class="job-main">
-          <span class="job-title">{{ job.title | tidy_title }}</span>
-          <span class="job-company">{{ job.company }} · <span title="{{ job.location }}">{{ job.location | short_location }}</span></span>
+          <span class="job-title">{{ job.title_text }}</span>
+          <span class="job-company">{{ job.company }} · <span title="{{ job.location }}">{{ job.location_text }}</span></span>
         </span>
         <span class="job-side">
-          <span class="job-salary">{{ format_salary(job) }}</span>
+          <span class="job-salary">{{ job.salary_text }}</span>
+          {% if job.close_reason_text and not saved %}<span class="close-badge">{{ job.close_reason_text }}</span>{% endif %}
           {# The logic layer's outcome (logic_manager.match_outcome); jobs saved before it existed have none #}
-          {% if job.match_outcome %}<span class="outcome outcome-{{ job.match_outcome.split()[0] | lower }}">{{ job.match_outcome }}</span>{% endif %}
+          {% if saved and job.status and job.status != statuses[0] %}<span class="status-badge">{{ job.status }}</span>{% endif %}
+          {% if job.match_outcome %}<span class="outcome outcome-{{ job.match_outcome.split()[0] | lower }}">{{ outcome_label(job.match_outcome) }}</span>{% endif %}
           {% if required %}
           <span class="match" title="{{ matched }} of {{ required }} required skills matched">
             <span class="match-bar"><span style="width: {{ (100 * matched / required) | round | int }}%"></span></span>
-            {{ matched }}/{{ required }} skills
+            {{ matched }} of {{ required }} key skills
           </span>
           {% endif %}
         </span>
@@ -34,13 +49,14 @@
       </summary>
 
       <div class="job-body">
-        {% if job.outcome_reason %}<p class="job-outcome"><strong>{{ job.match_outcome }}.</strong> {{ job.outcome_reason }}</p>{% endif %}
+        {% if job.outcome_reason %}<p class="job-outcome"><strong>{{ outcome_label(job.match_outcome) }}.</strong> {{ job.outcome_reason }}</p>{% endif %}
         <p class="job-reason">{{ job.suitability_reason }}</p>
 
         <dl class="facts">
-          {% if job.employment_types %}<div><dt>Job type</dt><dd>{{ join_list(job.employment_types) }}</dd></div>{% endif %}
+          {% if job.employment_types %}<div><dt>Job type</dt><dd>{{ job.job_types_text }}</dd></div>{% endif %}
           {% if job.work_arrangement and job.work_arrangement != "Not specified" %}<div><dt>Work arrangement</dt><dd>{{ job.work_arrangement }}</dd></div>{% endif %}
-          <div><dt>Experience</dt><dd>{{ job.min_years_experience | experience_text }}</dd></div>
+          <div><dt>Experience</dt><dd>{{ job.experience_text }}</dd></div>
+          {% if job.posted_text %}<div><dt>Posted</dt><dd>{{ job.posted_text }}</dd></div>{% endif %}
           {% if job.min_education and job.min_education != "Not specified" %}<div><dt>Education</dt><dd>{{ job.min_education }}</dd></div>{% endif %}
         </dl>
 
@@ -50,13 +66,13 @@
             <ul class="tags">
               {# A match under another name shows which of your skills covers it #}
               {% for skill in job.matched_skills %}
-              {% if skill.job_skill is same_skill(skill.candidate_skill) %}<li class="tag tag-good">{{ skill.job_skill }}</li>
+              {% if skill.same_name %}<li class="tag tag-good">{{ skill.job_skill }}</li>
               {% else %}<li class="tag tag-good" title="Matched by your skill: {{ skill.candidate_skill }}">{{ skill.job_skill }} <span class="tag-via">← your {{ skill.candidate_skill }}</span></li>{% endif %}
               {% else %}<li class="muted small">None of the required skills</li>{% endfor %}
             </ul>
           </div>
           <div>
-            <h4>Skills to build</h4>
+            <h4>Skills you'd need</h4>
             <ul class="tags">
               {% for skill in job.missing_skills %}<li class="tag">{{ skill }}</li>
               {% else %}<li class="muted small">You have every required skill</li>{% endfor %}
@@ -65,17 +81,32 @@
         </div>
 
         <div class="job-actions">
+          {# Only a web link: a hand-edited "javascript:" link must never become a clickable button #}
+          {% if (job.job_url or '').startswith('https://') %}
           <a class="btn btn-secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">
             View on MyCareersFuture
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>
           </a>
-          <a class="btn btn-secondary" href="{{ url_for('tailor', job_url=job.job_url) }}">
+          {% endif %}
+          <a class="btn btn-secondary" href="{{ url_for('tailor', job_url=job.job_url, from_search=search_id) if search_id else url_for('tailor', job_url=job.job_url) }}">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
             Tailor my resume
           </a>
           {% if saved %}
-          <form action="{{ url_for('remove_saved') }}" method="post">
+          {# Status and note on a saved job (web_app.update_saved -> io_manager.update_saved) #}
+          <form class="job-update" action="{{ url_for('update_saved') }}" method="post">
             <input type="hidden" name="job_url" value="{{ job.job_url }}">
+            <input type="hidden" name="q" value="{{ keyword }}">
+            <select name="status" aria-label="Status">
+              {% for option in statuses %}<option {% if option == (job.status or statuses[0]) %}selected{% endif %}>{{ option }}</option>{% endfor %}
+            </select>
+            <input name="note" type="text" maxlength="500" placeholder="Add a note" aria-label="Note" value="{{ job.note or '' }}">
+            <button class="btn btn-secondary" type="submit">Update</button>
+          </form>
+          <form class="remove-form" action="{{ url_for('remove_saved') }}" method="post"
+                data-title="{{ job.title or 'this job' }}">
+            <input type="hidden" name="job_url" value="{{ job.job_url }}">
+            <input type="hidden" name="q" value="{{ keyword }}">
             <button class="btn btn-ghost" type="submit">Remove</button>
           </form>
           {% endif %}

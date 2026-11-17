@@ -31,6 +31,7 @@ function setupTaskForm({ resultUrl, onStarted = () => {} }) {
   const steps = [...panel.querySelectorAll(".steps li")];
 
   let activeTask = null;  // id of the task being polled; null stops polling
+  let startedAt = 0;  // when the progress card opened, for the seconds shown during a long AI step
 
   function removeTaskFromAddress() {
     const params = new URLSearchParams(location.search);
@@ -59,6 +60,7 @@ function setupTaskForm({ resultUrl, onStarted = () => {} }) {
     form.hidden = true;
     panel.hidden = false;
     cancelButton.disabled = false;
+    startedAt = Date.now();
     setProgress(0, "Starting...");
     window.scrollTo({ top: 0, behavior: "smooth" });
     poll(taskId);
@@ -68,7 +70,9 @@ function setupTaskForm({ resultUrl, onStarted = () => {} }) {
     bar.style.width = percent + "%";
     bar.parentElement.setAttribute("aria-valuenow", percent);
     percentText.textContent = percent + "%";
-    message.textContent = text;
+    // The AI steps can take half a minute with no new percent, so the seconds show it is still working
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    message.textContent = seconds >= 3 && percent < 100 ? `${text} (${seconds}s)` : text;
 
     // A step is done once the next one has started, and active while it is the latest started
     steps.forEach((step, i) => {
@@ -95,6 +99,9 @@ function setupTaskForm({ resultUrl, onStarted = () => {} }) {
       }
       setProgress(data.percent, data.message);
       if (data.status === "done") {
+        // Take the task out of this page's address first, so Back returns to the form instead of
+        // re-opening the finished task and being sent forward again
+        removeTaskFromAddress();
         window.location.href = resultUrl(taskId);
         return;
       }
@@ -120,7 +127,7 @@ function setupTaskForm({ resultUrl, onStarted = () => {} }) {
       onStarted();
       showProgress(data.search_id);
     } catch {
-      showForm("Could not reach the server. Is web_app.py still running?");
+      showForm("Can't reach the app. Check it's still running, then try again.");
     }
   });
 

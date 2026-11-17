@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% from "_jobs.html" import outcome_label %}
+
+{% block title %}What if I learned... · Resume Job Matcher{% endblock %}
+
+{% macro money(amount) %}${{ "{:,}".format(amount | round | int) }}{% endmacro %}
+
+{# One skill pill: a checkbox with the skill's own effect, "+3" more strong matches (IOManager.__whatif_page) #}
+{% macro pick(item, ticked) %}
+<label class="pick" title="{{ item.strong_gain }} more strong match{{ 'es' if item.strong_gain != 1 }} · asked for in {{ item.jobs }} job{{ 's' if item.jobs != 1 }}">
+  <input type="checkbox" name="skill" value="{{ item.skill }}"{% if item.skill in ticked %} checked{% endif %}>
+  <span>{{ item.skill }}</span>
+  <span class="impact{% if item.strong_gain <= 0 %} zero{% endif %}">+{{ [item.strong_gain, 0] | max }}</span>
+</label>
+{% endmacro %}
+
+{# The skills, most helpful first: the first five (and any ticked one) show; the rest fold away #}
+{% macro skill_picks(ticked) %}
+{% set folded = namespace(count=0) %}
+<div class="picks">
+  {% for item in skill_impact %}{% if loop.index <= 5 or item.skill in ticked %}{{ pick(item, ticked) }}{% else %}{% set folded.count = folded.count + 1 %}{% endif %}{% endfor %}
+</div>
+{% if folded.count %}
+<details class="more-picks"><summary>Show {{ folded.count }} more skill{{ "s" if folded.count != 1 }}</summary>
+  <div class="picks">
+    {% for item in skill_impact %}{% if loop.index > 5 and item.skill not in ticked %}{{ pick(item, ticked) }}{% endif %}{% endfor %}
+  </div>
+</details>
+{% endif %}
+{% endmacro %}
+
+{# One job's row. In the top list (ranked) it says its place in words ("1st"), with "Best match" on the first; below
+   it there are no numbers. The track runs from best match (left) to lower: hollow dot = now, filled dot = after,
+   coloured by the match; shaded = the top list #}
+{% macro move_row(m, n, top_n, ranked) %}
+{% set lo, hi = [m.rank_before, m.rank_after] | min, [m.rank_before, m.rank_after] | max %}
+{% set moved = m.places_gained | abs %}
+{% set suffix = "th" if (m.rank_after % 100) in (11, 12, 13) else {1: "st", 2: "nd", 3: "rd"}.get(m.rank_after % 10, "th") %}
+<li class="mrow{% if ranked %} ranked{% endif %}">
+  <div class="mlabel">
+    <p class="mtitle">{% if ranked %}<span class="r">{{ m.rank_after }}{{ suffix }}</span>{% endif %}<span class="t" title="{{ m.title }} · {{ m.company }}">{{ m.title }} <span class="mco">· {{ m.company }}</span></span></p>
+    <p class="mmeta">
+      {% if ranked and m.rank_after == 1 %}<span class="best">Best match</span>{% endif %}
+      {% if m.places_gained > 0 %}<span class="upby">▲ {{ moved }} place{{ "s" if moved != 1 }}</span>
+      {% elif m.places_gained < 0 %}<span class="downby">▼ {{ moved }} place{{ "s" if moved != 1 }}</span>{% endif %}
+      {% if m.outcome_before != m.outcome_after %}<span>{{ outcome_label(m.outcome_before, short=true) }} → <strong>{{ outcome_label(m.outcome_after, short=true) }}</strong></span>{% endif %}
+      {% if m.salary %}<span class="pay">{{ money(m.salary) }}</span>{% endif %}
+      {% if m.listed_after and m.rank_after <= top_n and not (m.listed_before and m.rank_before <= top_n) %}<span class="newtop">New</span>{% endif %}
+      {% if ranked and m.places_gained == 0 and m.outcome_before == m.outcome_after %}<span>no change</span>{% endif %}
+    </p>
+  </div>
+  <div class="track" aria-hidden="true">
+    <span class="zone" style="width: {{ (([top_n, n] | min) / n * 100) | round(2) }}%"></span>
+    {% if m.places_gained != 0 %}
+    <span class="move {{ 'up' if m.places_gained > 0 else 'down' }}" style="left: {{ ((lo - 0.5) / n * 100) | round(2) }}%; width: {{ ((hi - lo) / n * 100) | round(2) }}%"></span>
+    <span class="pt before" style="left: {{ ((m.rank_before - 0.5) / n * 100) | round(2) }}%"></span>
+    {% endif %}
+    <span class="pt o-{{ m.outcome_after.split()[0] | lower }}" style="left: {{ ((m.rank_after - 0.5) / n * 100) | round(2) }}%"></span>
+  </div>
+</li>
+{% endmacro %}
+
+{# How the jobs move: the top list in order, then the others that got better, then one line for the rest #}
+{% macro movements(verdict, report) %}
+{% set n = report.movements | length %}
+{% set top_n = report.top_n %}
+<div class="moves">
+  <div class="move-axis" aria-hidden="true"><span></span><span class="scale-words"><span>Best match</span><span>Lower</span></span></div>
+  {% if verdict.top %}
+  <p class="group-head">Your top {{ top_n }}</p>
+  <ol class="move-list">{% for m in verdict.top %}{{ move_row(m, n, top_n, true) }}{% endfor %}</ol>
+  {% endif %}
+  {% if verdict.below %}
+  <p class="group-head">Further down your list</p>
+  <ol class="move-list">{% for m in verdict.below %}{{ move_row(m, n, top_n, false) }}{% endfor %}</ol>
+  {% endif %}
+  {% if verdict.others %}
+  <details class="others">
+    <summary>{{ verdict.others_line }}<span class="show">Show {{ "it" if verdict.others | length == 1 else "them" }}</span></summary>
+    <ol class="move-list">{% for m in verdict.others %}{{ move_row(m, n, top_n, false) }}{% endfor %}</ol>
+  </details>
+  {% endif %}
+</div>
+<div class="whatif-key">
+  <span><i class="key-dot before"></i>Now</span><span><i class="key-dot o-strong"></i>After</span>
+  <span><i class="key-zone"></i>Top {{ top_n }}</span>
+</div>
+<details class="table-fold">
+  <summary>Show as a table</summary>
+  <div class="table-scroll">
+    <table class="plain-table">
+      <thead><tr><th>Job</th><th>Place</th><th>Match</th><th>Newly covered</th></tr></thead>
+      <tbody>
+        {% for move in report.movements %}
+        <tr>
+          <td>{{ move.title }}<br><span class="muted small">{{ move.company }}</span></td>
+          <td>{{ move.rank_before if move.listed_before else "not listed" }} &rarr; {{ move.rank_after if move.listed_after else "not listed" }}</td>
+          <td>{% if move.outcome_before == move.outcome_after %}{{ outcome_label(move.outcome_after) }}{% else %}{{ outcome_label(move.outcome_before) }} &rarr; {{ outcome_label(move.outcome_after) }}{% endif %}</td>
+          <td>{{ move.skills_gained | join(", ") or "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted small">Places are among the jobs your results page lists; "not listed" means a job matches none of your skills yet.</p>
+</details>
+{% endmacro %}
+
+{% macro tile(number, label, good) -%}
+<div class="whatif-tile{% if good %} good{% endif %}"><span class="num">{{ number }}</span><span class="what">{{ label }}</span></div>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head page-head-row">
+  <div>
+    <h1>What if I learned...?</h1>
+    <p class="lead">See how a new skill changes your job matches.</p>
+  </div>
+  <a class="btn btn-secondary" href="{{ url_for('results', search_id=search_id) }}">Back to matches</a>
+</div>
+
+{% if based_on %}
+<p class="based-on"><span class="section-label">Based on</span> {{ job_count }} job{{ "s" if job_count != 1 }}:
+  {% for title, count in based_on.titles %}{{ title }} ({{ count }}){{ ", " if not loop.last }}{% endfor %}
+  {% if based_on.none_for %}<span class="muted">· none for {% for title in based_on.none_for %}“{{ title }}”{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}</p>
+{% endif %}
+{% if you_have %}
+<p class="based-on"><span class="section-label">You have</span> <span class="muted">{{ you_have | join(", ") }}</span></p>
+{% endif %}
+
+{% if problem %}
+<p class="alert alert-error" role="alert">{{ problem }}</p>
+{% endif %}
+
+{% if not skills_available %}
+<div class="empty card">
+  <h3>Nothing to learn</h3>
+  <p class="muted">{% if job_count %}You already have every skill these jobs list, so there is nothing to simulate.{% else %}None of the jobs found meet the filters this search used, so there is nothing to simulate.{% endif %}</p>
+</div>
+{% else %}
+{% set planning = mode != "test" %}
+
+{# whatif.js shows these tabs and one panel at a time; without JavaScript both forms show, one under the other #}
+<div class="whatif-tabs" role="tablist" aria-label="What to do" data-tabs hidden>
+  <button type="button" role="tab" id="tab-try" aria-controls="panel-try" aria-selected="{{ 'false' if planning else 'true' }}">Try a skill</button>
+  <button type="button" role="tab" id="tab-plan" aria-controls="panel-plan" aria-selected="{{ 'true' if planning else 'false' }}">Plan what to learn</button>
+</div>
+
+<section id="panel-try" class="whatif-panel" role="tabpanel" aria-labelledby="tab-try">
+  {# Sent as soon as a skill or the list size changes (whatif.js), so the button only shows without JavaScript #}
+  <form class="card" method="post" action="{{ url_for('whatif', search_id=search_id) }}#result" data-autosubmit>
+    <input type="hidden" name="mode" value="test">
+    <h2>Pick a skill</h2>
+    {{ skill_picks(chosen if not planning else []) }}
+    <details class="extra-skill"{% if extra_skills and not planning %} open{% endif %}>
+      <summary>Other skill</summary>
+      <div class="add-row">
+        <label class="sr-only" for="extra_skills">Skills, separated by commas</label>
+        <input id="extra_skills" name="extra_skills" type="text" value="{{ extra_skills if not planning else '' }}" placeholder="e.g. Tableau">
+        <button class="btn btn-secondary" type="submit">Add</button>
+      </div>
+    </details>
+    <div class="whatif-controls">
+      <div class="field">
+        <label for="top_n">List size</label>
+        <select id="top_n" name="top_n">
+          {% for size in ([3, 5, 10, top_n] | unique | sort) %}<option value="{{ size }}" {% if size == top_n %}selected{% endif %}>Top {{ size }}</option>{% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-primary" type="submit" data-no-js>See the difference</button>
+    </div>
+  </form>
+</section>
+
+<section id="panel-plan" class="whatif-panel" role="tabpanel" aria-labelledby="tab-plan">
+  <form class="card" method="post" action="{{ url_for('whatif', search_id=search_id) }}#result" data-autosubmit>
+    <input type="hidden" name="top_n" value="{{ top_n }}">
+    <h2>Get a learning plan</h2>
+    <div class="whatif-controls">
+      <fieldset class="field steps-field">
+        <legend>Goal</legend>
+        <div class="seg seg-wide">
+          {% for key, label in planners %}
+          <label title="{{ 'Raise the average pay of your top ' ~ top_n if key == 'salary' else 'Move your jobs up the ranking' }}"><input type="radio" name="mode" value="{{ key }}" {% if mode == key or (not planning and loop.first) %}checked{% endif %}><span>{{ label }}</span></label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <fieldset class="field steps-field">
+        <legend>How many skills</legend>
+        <div class="seg">
+          {% for count in range(1, ([5, max_steps] | min) + 1) %}
+          <label><input type="radio" name="steps" value="{{ count }}" {% if count == steps %}checked{% endif %}><span>{{ count }}</span></label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <button class="btn btn-primary" type="submit" data-no-js>Build my plan</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+{% if roadmap and roadmap.is_empty %}
+<section id="result" class="card whatif-result">
+  <p class="muted">{% if mode == "salary" %}{% if steps == 1 %}No single skill would raise the average pay of your top {{ top_n }}. Try 2 or more skills: some only pay off together.{% else %}No skill would raise the average pay of your top {{ top_n }}.{% endif %}{% else %}None of these skills would move your jobs up.{% endif %}</p>
+</section>
+{% elif verdict %}
+{% set top_n = report.top_n %}
+<section id="result" class="card whatif-result" aria-live="polite">
+  {% if roadmap %}
+  {# A plan, judged by its own goal: places gained, or the top list's average pay #}
+  {% set by_pay = mode == "salary" %}
+  {% set tier = verdict.pay_tier if by_pay else verdict.rank_tier %}
+  <div class="verdict v-{{ tier }}">
+    <span class="verdict-badge">{{ verdict.pay_badge if by_pay else verdict.rank_badge }}</span>
+    <p class="verdict-text">Learning <b>{{ roadmap_steps | map(attribute="skill") | join(", then ") }}</b> {{ verdict.pay_effect if by_pay else verdict.rank_effect }}.</p>
+  </div>
+
+  {% set gains = roadmap_steps | map(attribute="pay" if by_pay else "places") | list %}
+  {% set base = verdict.pay_before if by_pay else 0 %}
+  {% set scale = [1, (gains | max) - base] | max %}
+  <div class="stairs-scroll">
+    <ol class="stairs" aria-label="{% if by_pay %}Average monthly pay of your top {{ top_n }}: {{ money(base) }} now{% for step in roadmap_steps %}, {{ money(step.pay) }} after {{ step.skill }}{% endfor %}{% else %}Places gained: 0 now{% for step in roadmap_steps %}, {{ step.places }} after {{ step.skill }}{% endfor %}{% endif %}.">
+      <li class="stair">
+        <span class="bar-zone"><span class="bar now" style="height: 6px"><span class="val">{{ money(base) if by_pay else 0 }}</span></span></span>
+        <span class="section-label">Now</span>
+      </li>
+      {% for step in roadmap_steps %}
+      {% set value = (step.pay - base) if by_pay else step.places %}
+      {% set added = step.pay_added if by_pay else step.places_added %}
+      <li class="stair">
+        <span class="bar-zone"><span class="bar{% if by_pay %} money{% endif %}" style="height: {{ [6, ([value, 0] | max) / scale * 140] | max | round | int }}px"><span class="val">{{ ("+" if value >= 0 else "−") ~ (money(value | abs) if by_pay else value | abs) }}</span></span></span>
+        <span class="stair-skill">{{ step.skill }}</span>
+        <span class="stair-adds{% if added <= 0 %} none{% endif %}">{% if added > 0 %}+{{ money(added) ~ "/mth" if by_pay else added ~ (" place" if added == 1 else " places") }}{% else %}no gain on its own{% endif %}</span>
+        {% if step.together %}<span class="muted small">learn together</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+  {% if roadmap.skills | length < steps %}
+  <p class="muted small">Nothing else helps after {{ roadmap.skills | length }} skill{{ "s" if roadmap.skills | length != 1 }}.</p>
+  {% endif %}
+  {% if comparison %}
+  <p class="compare-line">{% if comparison.steps == (roadmap_steps | map(attribute="skill") | list) %}Both goals give the same plan.{% else %}<b>{{ comparison.label }}</b> would pick {{ comparison.steps | join(" → ") }}: {% if comparison.key == "salary" %}<b>{{ money(comparison.pay) }}</b> average pay, against {{ money(verdict.pay_after) }} here{% else %}<b>{{ comparison.places }}</b> places, against {{ report.places_gained }} here{% endif %}.{% endif %}</p>
+  {% endif %}
+
+  <details class="more-detail">
+    <summary>How your jobs move</summary>
+    <div class="whatif-result-detail">
+      <div class="whatif-tiles">
+        {% if by_pay %}
+        {{ tile(("+" if verdict.pay_after > verdict.pay_before else "") ~ money(verdict.pay_after - verdict.pay_before), "a month, average pay of your top " ~ top_n, verdict.pay_after > verdict.pay_before) }}
+        {{ tile(money(verdict.best_pay_after), "best-paid job in your top " ~ top_n, verdict.best_pay_after > verdict.best_pay_before) }}
+        {% else %}
+        {{ tile(report.places_gained, "place gained" if report.places_gained == 1 else "places gained", report.places_gained > 0) }}
+        {{ tile(report.jobs_moved_up, "job moves up" if report.jobs_moved_up == 1 else "jobs move up", report.jobs_moved_up > 0) }}
+        {% endif %}
+        {{ tile(verdict.entered_top | length, "new in your top " ~ top_n, verdict.entered_top) }}
+      </div>
+      {{ movements(verdict, report) }}
+    </div>
+  </details>
+
+  {% else %}
+  {# Skills tried: judged by strong matches #}
+  <div class="verdict v-{{ verdict.tier }}">
+    <span class="verdict-badge">{{ verdict.badge }}</span>
+    <p class="verdict-text">Learning <b>{{ report.skills | join(" + ") }}</b> {{ verdict.effect }}.</p>
+  </div>
+  <div class="whatif-tiles">
+    {{ tile(("+" if verdict.more_strong > 0 else "") ~ verdict.more_strong, "strong match" if verdict.more_strong in (1, -1) else "strong matches", verdict.more_strong > 0) }}
+    {{ tile(report.jobs_moved_up, "job moves up" if report.jobs_moved_up == 1 else "jobs move up", report.jobs_moved_up > 0) }}
+    {{ tile(verdict.entered_top | length, "new in your top " ~ top_n, verdict.entered_top) }}
+  </div>
+  {{ movements(verdict, report) }}
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='whatif.js') }}"></script>
+{% endblock %}

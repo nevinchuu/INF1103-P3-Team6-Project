@@ -5,12 +5,10 @@ const form = document.getElementById("task-form");
 const resumeChoice = document.getElementById("resume_choice");
 const resumeFile = document.getElementById("resume_file");
 const resumeNote = document.getElementById("resume-note");
-const minSalary = document.getElementById("min_salary");
-const maxSalary = document.getElementById("max_salary");
 
 const MAX_UPLOAD = Number(form.dataset.maxUpload);
 const ALLOWED_EXTENSIONS = [".pdf", ".docx"];
-const SAVED_FIELDS = ["resume_choice", "min_salary", "max_salary", "job_type", "work_arrangement",
+const SAVED_FIELDS = ["resume_choice", "min_salary", "job_type", "work_arrangement",
                       "max_years_experience", "fallback_qualification", "fallback_skills"];
 const STORAGE_KEY = "jobMatcher.lastSearch";
 
@@ -32,18 +30,8 @@ resumeFile.addEventListener("change", () => {
   }
   resumeFile.reportValidity();
 
-  const taken = [...resumeChoice.options].some((option) => option.value === file.name);
-  resumeNote.textContent = `Using the uploaded file "${file.name}" instead of a saved resume.` +
-    (taken ? " It will be saved as a new copy, so your existing file with that name is kept." : "");
+  resumeNote.textContent = `Using "${file.name}". If you've uploaded this exact file before, we'll reuse it.`;
 });
-
-function checkSalaryRange() {
-  const low = Number(minSalary.value || 0);
-  const high = maxSalary.value === "" ? Infinity : Number(maxSalary.value);
-  maxSalary.setCustomValidity(high < low ? "Maximum salary cannot be lower than minimum salary." : "");
-}
-minSalary.addEventListener("input", checkSalaryRange);
-maxSalary.addEventListener("input", checkSalaryRange);
 
 // ---------- Remembering the last search's choices (this browser only) ----------
 
@@ -72,7 +60,6 @@ function restoreFields() {
     if (field.tagName === "SELECT" && ![...field.options].some((option) => option.value === value)) continue;
     field.value = value;
   }
-  checkSalaryRange();
 }
 
 restoreFields();

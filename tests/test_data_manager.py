@@ -1,225 +1,196 @@
-"""Tests for the data layer (src/data_manager.py): saving, loading and querying jobs in a JSON file.
+"""Tests for the data layer (src/data_layer/data_manager.py): saving, loading, querying and updating jobs.
 
-Plain functions only (the project is fully procedural). Run from the project root:
-
-    python tests/test_data_manager.py
-
-Each test works on its own file in a temporary folder, so the real data/job_listings.json is never
-touched. The runner at the bottom calls every test_* function; they also run under pytest.
+DataManager is tested on an in-memory storage, so no file, database or real data folder is touched.
 """
 
-import glob
-import json
-import os
-import sys
-import tempfile
+import pytest
 
-# The project's modules live in src/, so add it to the import path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
-
-import data_manager  # noqa: E402
-import io_manager  # noqa: E402  (all output goes through the input/output layer)
-
-REAL_DATABASE_PATH = data_manager.DATABASE_PATH
+from data_layer import data_manager
+from data_layer.data_manager import DataManager, STATUSES
+from data_layer.data_store_error import DataStoreError
+from fakes import FakePortal, FlakyStorage, InMemoryStorage
 
 
-def use_temporary_database(folder: str) -> str:
-    """Points the data layer at a job_listings.json inside folder, and returns that path."""
-    data_manager.DATABASE_PATH = os.path.join(folder, "data", "job_listings.json")
-    return data_manager.DATABASE_PATH
-
-
-def write_raw(path: str, text: str) -> None:
-    """Writes text to path as it is, e.g. a corrupt file."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as file:
-        file.write(text)
-
-
-def make_job(number: int, **changes: object) -> dict:
-    """A job record like the logic layer returns, with its own link."""
+def make_job(number: int, **changes) -> dict:
     job = {"title": f"Data Analyst {number}", "company": "Acme Pte Ltd", "location": "Jurong",
            "job_url": f"https://www.mycareersfuture.gov.sg/job/it/data-analyst-{number:032x}"}
     job.update(changes)
     return job
 
 
-# 1. Load on startup: a missing file gives an empty list and is created
-def test_missing_file_is_created_empty():
-    with tempfile.TemporaryDirectory() as folder:
-        path = use_temporary_database(folder)
-        assert data_manager.read_saved_jobs() == []
-        with open(path, encoding="utf-8") as file:
-            assert json.load(file) == []
+@pytest.fixture
+def data() -> DataManager:
+    return DataManager(InMemoryStorage(), FakePortal([]))
 
 
-# 2. A corrupt file doesn't crash: it is kept as a dated backup and replaced by an empty list
-def test_corrupt_file_is_backed_up_not_crashed():
-    with tempfile.TemporaryDirectory() as folder:
-        path = use_temporary_database(folder)
-        write_raw(path, '[{"title": "half a reco')
-        assert data_manager.read_saved_jobs() == []
-        backups = glob.glob(path + ".*.bak")
-        assert len(backups) == 1
-        with open(backups[0], encoding="utf-8") as file:
-            assert file.read() == '[{"title": "half a reco'  # nothing the user had is lost
+def test_saving_keeps_jobs_between_runs_adds_only_new_links_notes_the_resume_and_numbers_the_ids(data):
+    assert data.save_new_jobs([make_job(1), make_job(2)], "resume_a.pdf") == 2
+    # Job 2 is already saved, so only job 3 is new; job 2 keeps the resume that first found it
+    assert data.save_new_jobs([make_job(2), make_job(3)], "resume_b.pdf") == 1
+    saved = data.read_saved_jobs()
+    assert [job["title"] for job in saved] == ["Data Analyst 1", "Data Analyst 2", "Data Analyst 3"]
+    assert [job["resume"] for job in saved] == ["resume_a.pdf", "resume_a.pdf", "resume_b.pdf"]
+    assert [job["ID"] for job in saved] == [0, 1, 2]
+    assert data.save_new_jobs([], "resume_a.pdf") == 0
 
 
-# 3. Valid JSON that isn't a list of jobs (e.g. edited by hand) is treated the same as corrupt
-def test_file_that_is_not_a_list_is_backed_up():
-    with tempfile.TemporaryDirectory() as folder:
-        path = use_temporary_database(folder)
-        for text in ('{"jobs": []}', "null", "42"):
-            write_raw(path, text)
-            assert data_manager.read_saved_jobs() == []
-        assert len(glob.glob(path + ".*.bak")) >= 1
-
-
-# 4. Loading skips anything in the list that isn't a job record
-def test_loading_skips_entries_that_are_not_jobs():
-    with tempfile.TemporaryDirectory() as folder:
-        path = use_temporary_database(folder)
-        write_raw(path, json.dumps([make_job(1), "not a job", 7, None]))
-        assert [job["title"] for job in data_manager.read_saved_jobs()] == ["Data Analyst 1"]
-
-
-# 5. Saving keeps jobs between runs, adds only new links, notes the resume and numbers the IDs
-def test_save_new_jobs_skips_duplicates_and_persists():
-    with tempfile.TemporaryDirectory() as folder:
-        use_temporary_database(folder)
-        assert data_manager.save_new_jobs([make_job(1), make_job(2)], "resume_a.pdf") == 2
-        # Job 2 is already saved, so only job 3 is new; job 2 keeps the resume that first found it
-        assert data_manager.save_new_jobs([make_job(2), make_job(3)], "resume_b.pdf") == 1
-        saved = data_manager.read_saved_jobs()  # read back from the file, as a new run would
-        assert [job["title"] for job in saved] == ["Data Analyst 1", "Data Analyst 2", "Data Analyst 3"]
-        assert [job["resume"] for job in saved] == ["resume_a.pdf", "resume_a.pdf", "resume_b.pdf"]
-        assert [job["ID"] for job in saved] == [0, 1, 2]
-        assert data_manager.save_new_jobs([], "resume_a.pdf") == 0
-
-
-# 6. Query: every word must appear in the title, company or location, ignoring case
-def test_search_jobs_matches_every_word_in_title_company_or_location():
-    jobs = [make_job(1, title="Senior Data Analyst"), make_job(2, title="Data Engineer"),
-            make_job(3, title="Accountant", location="Data Centre, Jurong")]
-    assert [job["title"] for job in data_manager.search_jobs(jobs, "data analyst")] == ["Senior Data Analyst"]
-    assert [job["title"] for job in data_manager.search_jobs(jobs, "JURONG data")] == [
-        "Senior Data Analyst", "Data Engineer", "Accountant"]
-    assert data_manager.search_jobs(jobs, "nurse") == []
-
-
-# 7. Query: one job by its link
-def test_find_by_url():
+def test_saving_does_not_change_the_callers_records(data):
     jobs = [make_job(1), make_job(2)]
-    assert data_manager.find_by_url(jobs, make_job(2)["job_url"])["title"] == "Data Analyst 2"
-    assert data_manager.find_by_url(jobs, "https://example.com/not-saved") is None
+    data.save_new_jobs(jobs, "resume.pdf")
+    assert jobs == [make_job(1), make_job(2)]
 
 
-# 8. Removing one job or all of them; the IDs are numbered again afterwards
-def test_remove_one_job_and_clear_all():
-    with tempfile.TemporaryDirectory() as folder:
-        use_temporary_database(folder)
-        data_manager.save_new_jobs([make_job(1), make_job(2), make_job(3)], "resume.pdf")
-        data_manager.remove_saved_job(make_job(2)["job_url"])
-        saved = data_manager.read_saved_jobs()
-        assert [(job["ID"], job["title"]) for job in saved] == [(0, "Data Analyst 1"), (1, "Data Analyst 3")]
-        data_manager.clear_saved_jobs()
-        assert data_manager.read_saved_jobs() == []
+def test_the_same_link_twice_in_one_save_counts_once(data):
+    assert data.save_new_jobs([make_job(1), make_job(1, title="Data Analyst 1 again")], "resume.pdf") == 1
+    assert [job["title"] for job in data.read_saved_jobs()] == ["Data Analyst 1"]
 
 
-# 9. A save that fails part way leaves the old file as it was, and no temporary file behind
-def test_failed_save_keeps_the_old_file():
-    with tempfile.TemporaryDirectory() as folder:
-        path = use_temporary_database(folder)
-        data_manager.save_new_jobs([make_job(1)], "resume.pdf")
-        try:
-            data_manager.write_database([make_job(2, salary=object())])  # can't be written as JSON
-            raise AssertionError("expected the save to fail")
-        except TypeError:
-            pass
-        assert [job["title"] for job in data_manager.read_saved_jobs()] == ["Data Analyst 1"]
-        assert glob.glob(os.path.join(os.path.dirname(path), "*.tmp")) == []
+def test_jobs_without_a_link_are_not_saved(data):
+    jobs = [{"title": "No link at all"}, make_job(1, job_url=""), make_job(2, job_url="N/A"), make_job(3)]
+    assert data.save_new_jobs(jobs, "resume.pdf") == 1
+    assert [job["job_url"] for job in data.read_saved_jobs()] == [make_job(3)["job_url"]]
 
 
-# 10. Two broken files in the same second each keep their own backup, so nothing is lost
-def test_backups_in_the_same_second_are_all_kept():
-    with tempfile.TemporaryDirectory() as folder:
-        path = use_temporary_database(folder)
-        for text in ("{first broken file", "{second broken file", "{third broken file"):
-            write_raw(path, text)
-            assert data_manager.read_saved_jobs() == []
-        contents = []
-        for backup in glob.glob(path + ".*.bak"):
-            with open(backup, encoding="utf-8") as file:
-                contents.append(file.read())
-        assert sorted(contents) == ["{first broken file", "{second broken file", "{third broken file"]
+def test_a_saved_job_is_found_by_its_link(data):
+    data.save_new_jobs([make_job(1), make_job(2)], "resume.pdf")
+    assert data.get_saved_job(make_job(1)["job_url"])["title"] == "Data Analyst 1"
+    assert data.get_saved_job("https://example.com/not-saved") is None
 
 
-# 11. Saving doesn't change the caller's records (the saved copies get "resume" and "ID")
-def test_saving_leaves_the_callers_jobs_unchanged():
-    with tempfile.TemporaryDirectory() as folder:
-        use_temporary_database(folder)
-        jobs = [make_job(1), make_job(2)]
-        data_manager.save_new_jobs(jobs, "resume.pdf")
-        assert jobs == [make_job(1), make_job(2)]
-        assert [job["resume"] for job in data_manager.read_saved_jobs()] == ["resume.pdf", "resume.pdf"]
+def test_search_saved_needs_every_word_in_the_title_company_or_location(data):
+    data.save_new_jobs([make_job(1, title="Senior Data Analyst"), make_job(2, title="Data Engineer"),
+                        make_job(3, title="Accountant", location="Data Centre, Jurong")], "resume.pdf")
+    found = lambda keyword: [job["title"] for job in data.search_saved(keyword)]
+    assert found("data analyst") == ["Senior Data Analyst"]
+    assert found("CENTRE data") == ["Accountant"] and found("nurse") == []
+    assert len(found("")) == 3
 
 
-# 12. The same link twice in one save is saved, and counted, once
-def test_the_same_link_twice_in_one_save_counts_once():
-    with tempfile.TemporaryDirectory() as folder:
-        use_temporary_database(folder)
-        assert data_manager.save_new_jobs([make_job(1), make_job(1, title="Data Analyst 1 again")], "resume.pdf") == 1
-        assert [job["title"] for job in data_manager.read_saved_jobs()] == ["Data Analyst 1"]
+def test_a_status_and_a_note_can_be_set_on_a_saved_job(data):
+    data.save_new_jobs([make_job(1)], "resume.pdf")
+    url = make_job(1)["job_url"]
+    assert data.update_saved_job(url, status="Applied", note="  Emailed the recruiter  ") is True
+    job = data.get_saved_job(url)
+    assert (job["status"], job["note"]) == ("Applied", "Emailed the recruiter")
+    assert data.update_saved_job(url, note="Second note") is True  # only the note changes
+    assert data.get_saved_job(url)["status"] == "Applied"
 
 
-# 13. A saved file with a stray entry still takes new jobs, and the stray entry is dropped
-def test_a_stray_entry_in_the_file_does_not_stop_saving():
-    with tempfile.TemporaryDirectory() as folder:
-        path = use_temporary_database(folder)
-        write_raw(path, json.dumps([1, make_job(1)]))
-        assert data_manager.save_new_jobs([make_job(2)], "resume.pdf") == 1
-        assert [job["job_url"] for job in data_manager.read_saved_jobs()] == [make_job(1)["job_url"],
-                                                                              make_job(2)["job_url"]]
-        with open(path, encoding="utf-8") as file:
-            assert all(isinstance(entry, dict) for entry in json.load(file))
+def test_updating_a_job_that_is_not_saved_gives_false(data):
+    assert data.update_saved_job("https://example.com/missing", status="Applied") is False
+    assert data.update_saved_job("https://example.com/missing") is False
 
 
-# 14. A saved job with no link is skipped, so it can't break the duplicate check
-def test_a_saved_job_without_a_link_does_not_stop_saving():
-    with tempfile.TemporaryDirectory() as folder:
-        path = use_temporary_database(folder)
-        write_raw(path, json.dumps([{"title": "Hand-made entry"}, make_job(1)]))
-        assert data_manager.save_new_jobs([make_job(2)], "resume.pdf") == 1
-        assert [job["job_url"] for job in data_manager.read_saved_jobs()] == [make_job(1)["job_url"],
-                                                                              make_job(2)["job_url"]]
+def test_updating_with_nothing_to_change_only_checks_the_job_exists(data):
+    data.save_new_jobs([make_job(1)], "resume.pdf")
+    assert data.update_saved_job(make_job(1)["job_url"]) is True
 
 
-# 15. A new job without a link is not saved, whether the link is missing, empty or the portal's "N/A"
-def test_jobs_without_a_link_are_not_saved():
-    with tempfile.TemporaryDirectory() as folder:
-        use_temporary_database(folder)
-        no_link = {"title": "No link at all"}
-        jobs = [no_link, make_job(1, job_url=""), make_job(2, job_url="N/A"), make_job(3)]
-        assert data_manager.save_new_jobs(jobs, "resume.pdf") == 1
-        assert [job["job_url"] for job in data_manager.read_saved_jobs()] == [make_job(3)["job_url"]]
+def test_every_listed_status_is_accepted(data):
+    data.save_new_jobs([make_job(1)], "resume.pdf")
+    for status in STATUSES:
+        assert data.update_saved_job(make_job(1)["job_url"], status=status) is True
 
 
-def run_all_tests() -> int:
-    """Runs every test_* function in this file. Returns how many failed."""
-    tests = [function for name, function in globals().items() if name.startswith("test_") and callable(function)]
-    failed = 0
-    for test in tests:
-        try:
-            test()
-            io_manager.display_message(f"PASS  {test.__name__}")
-        except AssertionError as error:
-            failed += 1
-            io_manager.display_error(f"FAIL  {test.__name__} {error}")
-        finally:
-            data_manager.DATABASE_PATH = REAL_DATABASE_PATH
-    io_manager.display_message(f"\n{len(tests) - failed} of {len(tests)} tests passed.")
-    return failed
+URL = make_job(1)["job_url"]
+READS = {
+    "read_saved_jobs": lambda data: data.read_saved_jobs(),
+    "get_saved_job": lambda data: data.get_saved_job(URL),
+    "search_saved": lambda data: data.search_saved("analyst"),
+    "tracker_summary": lambda data: data.tracker_summary(),
+}
+WRITES = {
+    "save_new_jobs": lambda data: data.save_new_jobs([make_job(1)], "resume.pdf"),
+    "update_saved_job": lambda data: data.update_saved_job(URL, status="Applied"),
+    "remove_saved_job": lambda data: data.remove_saved_job(URL),
+    "clear_saved_jobs": lambda data: data.clear_saved_jobs(),
+}
 
 
-if __name__ == "__main__":
-    sys.exit(1 if run_all_tests() else 0)  # a non-zero exit code tells CI that a test failed
+@pytest.mark.parametrize("method", list(READS) + list(WRITES))
+def test_a_store_that_cannot_be_reached_is_reported_as_a_data_store_error(method):
+    flaky = FlakyStorage(InMemoryStorage())
+    data = DataManager(flaky, FakePortal([]))
+    flaky.fail_reads, flaky.fail_writes = True, True
+    with pytest.raises(DataStoreError):
+        {**READS, **WRITES}[method](data)
+
+
+def test_updating_with_nothing_to_change_reports_an_unreachable_store():
+    flaky = FlakyStorage(InMemoryStorage())
+    flaky.fail_reads = True
+    with pytest.raises(DataStoreError):
+        DataManager(flaky, FakePortal([])).update_saved_job(URL)
+
+
+def test_the_original_error_is_kept_as_the_cause():
+    flaky = FlakyStorage(InMemoryStorage())
+    flaky.fail_reads = True
+    with pytest.raises(DataStoreError) as caught:
+        DataManager(flaky, FakePortal([])).read_saved_jobs()
+    assert isinstance(caught.value.__cause__, OSError)
+    assert "could not be reached" in str(caught.value)
+
+
+# ---------- choosing the storage ----------
+
+def test_from_environment_builds_postgres_storage_from_database_url(monkeypatch):
+    built = []
+
+    class RecordingStorage(InMemoryStorage):
+        def __init__(self, dsn: str) -> None:
+            super().__init__()
+            built.append(dsn)
+
+    monkeypatch.setattr(data_manager, "PostgresStorage", RecordingStorage)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://someone@db.example/jobs")
+    manager = DataManager.from_environment()
+    assert built == ["postgresql://someone@db.example/jobs"] and isinstance(manager, DataManager)
+    monkeypatch.delenv("DATABASE_URL")
+    DataManager.from_environment()
+    assert built[-1] == data_manager.DEFAULT_DATABASE_URL
+
+
+# A saved job from an older version or a hand-edited file still loads in a shape the pages can show
+def test_saved_jobs_with_wrong_field_types_are_tidied_on_read(data):
+    job = {**make_job(1), "required_skills": None, "matched_skills": "abc", "missing_skills": 5, "status": "Weird"}
+    data.save_new_jobs([job], "resume.pdf")
+    loaded = data.read_saved_jobs()[0]
+    assert loaded["required_skills"] == [] and loaded["matched_skills"] == [] and loaded["missing_skills"] == []
+    assert loaded["status"] == "Saved" and data.get_saved_job(job["job_url"])["matched_skills"] == []
+
+
+# The application tracker: how many saved jobs are at each stage, counted by the storage (SQL GROUP BY on SQLite)
+def test_the_tracker_counts_jobs_by_status_with_the_storage(data):
+    data.save_new_jobs([make_job(1, match_outcome="Strong match"), make_job(2, match_outcome="Strong match"),
+                        make_job(3, match_outcome="Fair match"), make_job(4)], "resume.pdf")
+    data.update_saved_job(make_job(2)["job_url"], status="Applied")
+    data.update_saved_job(make_job(3)["job_url"], status="Interviewing")
+    summary = data.tracker_summary()
+    assert summary["total"] == 4
+    assert summary["by_status"] == {"Saved": 2, "Applied": 1, "Interviewing": 1, "Offer": 0, "Rejected": 0}
+    assert list(summary["by_status"]) == STATUSES  # always every stage, in pipeline order
+    assert summary["strong_not_applied"] == 1  # job 1: a strong match still only saved
+
+
+def test_the_tracker_of_an_empty_store_is_all_zeros(data):
+    assert data.tracker_summary() == {"total": 0, "by_status": {status: 0 for status in STATUSES},
+                                      "strong_not_applied": 0}
+
+
+# ---------- the job portal, reached through the data layer ----------
+
+def test_listings_and_details_come_from_the_portal_through_the_data_manager():
+    portal = FakePortal([make_job(1), make_job(2)], details={"description": "Use SQL", "listed_skills": ["SQL"]})
+    data = DataManager(FlakyStorage(InMemoryStorage()), portal)
+    listings = data.fetch_listings(["Data Analyst"], ["all"], {}, limit=5)
+    assert [job["title"] for job in listings] == ["Data Analyst 1", "Data Analyst 2"]
+    assert portal.searches == [("Data Analyst", {"step": "all"})]
+    assert data.portal_job_details("https://example.com/job")["listed_skills"] == ["SQL"]
+    assert data.portal_filters({}, "job type") == {"step": "job type"}
+
+
+def test_a_search_in_the_store_gives_jobs_the_pages_can_always_show(data):
+    data.save_new_jobs([make_job(1, required_skills=None, matched_skills="abc", status="Hired")], "resume.pdf")
+    found = data.search_saved("analyst")[0]
+    assert found["required_skills"] == [] and found["matched_skills"] == [] and found["status"] == "Saved"

@@ -5,8 +5,8 @@
 {% block content %}
 <div class="empty card">
   <h3>This page isn't available</h3>
-  <p class="muted">The link may be wrong, or these search results have expired. Results are kept only until
-    the app restarts, but your top matches are still in Saved jobs.</p>
+  <p class="muted">Search results are cleared when the app restarts, so please run a new search. Your top
+    matches are still in Saved jobs.</p>
   <div class="empty-actions">
     <a class="btn btn-primary" href="{{ url_for('index') }}">New search</a>
     <a class="btn btn-secondary" href="{{ url_for('saved') }}">Saved jobs</a>
