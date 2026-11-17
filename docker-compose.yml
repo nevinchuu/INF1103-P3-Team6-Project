@@ -1,61 +1,59 @@
 # Run from the project root, with Docker Desktop (or Docker Engine) running:
-#   docker compose up --build web      the web app: open http://127.0.0.1:5000 (Ctrl+C to stop)
-#   docker compose run --rm console    the console app
-#   docker compose run --rm --build tests   the tests, inside the container
+#   docker compose up --build web      the web app and its database: open http://127.0.0.1:5000 (Ctrl+C to stop)
+#   docker compose up -d db            only the PostgreSQL database (to run the app with Python on your computer)
+#   docker compose run --rm --build tests   the tests, inside the container (no database needed)
 # API keys come from .env next to this file. It is read when the app starts, never built into the image.
-# Saved jobs, logs and resumes stay in ./data, ./logs and ./resumes on your computer.
-
-# Settings shared by both apps
-x-app: &app
-  build:
-    context: .
-  image: jobmatcher
-  env_file:
-    - path: .env
-      required: false  # without it the app still starts; a search then says which key is missing
-  volumes:
-    - ./data:/app/data
-    - ./logs:/app/logs
-    - ./resumes:/app/resumes
-  init: true  # passes Ctrl+C and docker stop on to Python, so the app stops at once and cleanly
+# Saved jobs live in PostgreSQL on the named Docker volume pg_data (it survives container removal).
+# Logs and resumes stay in ./logs and ./resumes on your computer. The AI cache and the last portal listings
+# go to the data volume.
 
 services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: jobmatcher
+      POSTGRES_DB: jobmatcher
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobmatcher}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"  # only this computer can reach the database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobmatcher"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   web:
-    <<: *app
+    build:
+      context: .
+    image: jobmatcher
     command: ["python", "src/web_app.py"]
+    env_file:
+      - path: .env
+        required: false  # without it the app still starts; a search then says which key is missing
+    environment:
+      DATABASE_URL: postgresql://jobmatcher:${POSTGRES_PASSWORD:-jobmatcher}@db:5432/jobmatcher
+    depends_on:
+      db:
+        condition: service_healthy  # start the web app only when the database accepts connections
+    volumes:
+      - data:/app/data
+      - ./logs:/app/logs
+      - ./resumes:/app/resumes
     ports:
       - "127.0.0.1:5000:5000"  # only this computer can open the web app
+    init: true  # passes Ctrl+C and docker stop on to Python, so the app stops at once and cleanly
 
-  console:
-    <<: *app
-    stdin_open: true  # keyboard input, like docker run -it
-    tty: true
-    profiles: ["console"]  # started only by "docker compose run console", not by "docker compose up"
-
-  # The tests, run inside the container: one line per test file, then whether they all passed.
-  # No .env and no folders shared: the tests use fake AI and portal replies and temporary files
+  # The tests (pytest), run inside the container.
+  # No .env, no database and no folders shared: the tests use fake AI, portal and database replies and temporary files
   tests:
     build:
       context: .
     image: jobmatcher
     profiles: ["tests"]  # started only by "docker compose run --rm --build tests"
-    command:
-      - sh
-      - -c
-      - |
-        failed_files=0
-        for test_file in tests/test_*.py; do
-          if test_output=$$(python "$$test_file" 2>&1); then
-            echo "PASS  $$test_file: $$(echo "$$test_output" | tail -n 1)"
-          else
-            failed_files=$$((failed_files + 1))
-            echo "FAIL  $$test_file: $$(echo "$$test_output" | tail -n 1)"
-            echo "$$test_output" | grep "FAIL  "
-          fi
-        done
-        if [ "$$failed_files" -eq 0 ]; then
-          echo "ALL TESTS PASSED"
-        else
-          echo "TESTS FAILED in $$failed_files file(s)"
-          exit 1
-        fi
+    command: ["python", "-m", "pytest"]
+
+volumes:
+  pg_data:  # the PostgreSQL data
+  data:  # the AI cache and the last portal listings (data/ inside the web container)

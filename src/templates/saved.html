@@ -8,7 +8,7 @@
   <div>
     <h1>Saved jobs</h1>
     <p class="lead">
-      {% if total %}{{ total }} job{{ 's' if total != 1 }} saved from your searches. Select a job to see the details.
+      {% if total %}{{ total }} job{{ 's' if total != 1 }} saved from your searches. Click a job to see its details.
       {% else %}Jobs from your searches are saved here.{% endif %}
     </p>
   </div>
@@ -16,12 +16,12 @@
 </div>
 
 {% if load_failed %}
-<p class="alert alert-error" role="alert">Could not open your saved jobs file. Close any program that has
-  data/job_listings.json open, then reload this page. New searches still work.</p>
+<p class="alert alert-error" role="alert">Could not open your saved jobs file. Check that the
+  database is running, then reload this page. New searches still work.</p>
 {% endif %}
 {% if update_failed %}
-<p class="alert alert-error" role="alert">Could not update your saved jobs file, so nothing was changed. Close any
-  program that has data/job_listings.json open, then try again.</p>
+<p class="alert alert-error" role="alert">Could not update your saved jobs file, so nothing was changed. Check that
+  the database is running, then try again.</p>
 {% endif %}
 
 {% if problem %}
@@ -32,19 +32,23 @@
 {% endif %}
 
 {% if total %}
-  {# Application tracker: saved jobs by stage (DataManager.tracker_summary, counted with SQL on SQLite) #}
+  {# Application tracker: saved jobs by stage (DataManager.tracker_summary, counted with SQL in PostgreSQL).
+     Each stage is also a filter button: saved.js shows only the jobs at that stage (a stage with no jobs can't be
+     picked). Without JavaScript the buttons do nothing and the counts still show. #}
   <section class="tracker" aria-label="Application tracker">
     <ol class="tracker-stages">
       {% for status, count in tracker.by_status.items() %}
-      <li class="tracker-stage{% if count %} has-jobs{% endif %}"><span class="tracker-count">{{ count }}</span><span class="tracker-label">{{ status }}</span></li>
+      <li class="tracker-stage{% if count %} has-jobs{% endif %}"><button class="tracker-button" type="button" data-status="{{ status }}" aria-pressed="false" title="Show only {{ status }} jobs"{% if not count %} disabled{% endif %}><span class="tracker-count">{{ count }}</span><span class="tracker-label">{{ status }}</span></button></li>
       {% endfor %}
     </ol>
+    <p id="status-note" class="small tracker-hint status-note" hidden>Showing <strong id="status-note-name"></strong> jobs ·
+      <button id="status-show-all" class="link-button" type="button">Show all</button></p>
     {% if tracker.strong_not_applied %}
     <p class="muted small tracker-hint">{{ tracker.strong_not_applied }} strong match{{ 'es are' if tracker.strong_not_applied != 1 else ' is' }} saved but not applied to yet. Open one below to tailor your resume and apply.</p>
     {% endif %}
   </section>
 
-  {# The filter is a search form (?q=, data_manager.search_jobs); saved.js also filters
+  {# The filter is a search form (?q=, io_manager.saved_jobs); saved.js also filters
      as you type and sorts in the browser #}
   <div class="toolbar">
     <form class="field" method="get" action="{{ url_for('saved') }}" role="search">
@@ -61,12 +65,12 @@
       </select>
     </div>
     <form action="{{ url_for('clear_saved') }}" method="post" id="clear-form" data-total="{{ total }}">
-      <button class="btn btn-ghost" type="submit">Clear all</button>
+      <button class="btn btn-ghost" type="submit">Remove all saved jobs</button>
     </form>
   </div>
 
   {{ job_list(jobs, saved=True, statuses=statuses, open_url=open_url, keyword=keyword) }}
-  <p id="no-filter-match" class="muted empty-filter" {% if jobs %}hidden{% endif %}>No saved jobs match that filter.</p>
+  <p id="no-filter-match" class="muted empty-filter" {% if jobs %}hidden{% endif %}>No saved jobs match these filters.</p>
 {% else %}
   <div class="empty card">
     <h3>No saved jobs yet</h3>

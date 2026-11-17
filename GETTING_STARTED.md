@@ -1,17 +1,17 @@
 # Getting started
 
-This guide takes you from a fresh download to a working Resume Job Matcher. Pick **one** way to run it:
-with Python on your computer, or in Docker. The README explains how the project is built; this file
-only covers using it.
+This guide takes you from a fresh download to a working Resume Job Matcher. It is a web app: you use it in your
+browser. Pick **one** way to run it: with Python on your computer, or in Docker.
 
 ## What you need
 
-- The code (step 1 below)
+- The code (step 1 below).
 - An API key for one AI provider (step 2). The default is Google Gemini.
 - A resume as a PDF or Word (.docx) file. A sample is included: `resumes/sample_resume_fintech.docx`.
-- **Either** Python 3.11 or newer, **or** Docker Desktop.
+- **Either** Docker Desktop (the easiest way: it also runs the database), **or** Python 3.11 or newer plus a
+  PostgreSQL database. Saved jobs are kept in PostgreSQL. Way 1 shows how to get one.
 
-The text of your resume is sent to the AI provider to be read. Use the sample resume to try the app,
+The text of your resume is sent to Google Gemini to be read. Use the sample resume to try the app,
 and remove private details (home address, NRIC) before using your own.
 
 ## Step 1. Get the code
@@ -31,10 +31,12 @@ Create a file named `.env` in the project folder (the one that contains `README.
 
 | Line in `.env` | Meaning |
 |---|---|
-| `GEMINI_API_KEY=...` | Key for Google Gemini, the default provider |
-| `AI_PROVIDER=openai` | Optional. Use `gemini` (default), `qwen`, `openai` or `anthropic` |
-| `OPENAI_API_KEY=...`, `QWEN_API_KEY=...`, `ANTHROPIC_API_KEY=...` | Only needed for the provider you choose |
-| `AI_MODEL=...` | Optional. Replaces the provider's default model |
+| `GEMINI_API_KEY=...` | Key for Google Gemini, the AI the app uses |
+| `AI_MODEL=...` | Optional. Replaces the default Gemini model |
+| `DATABASE_URL=...` | Optional, for Way 1 with your own PostgreSQL server only. Where that database is. Leave it out to use the Docker database |
+| `POSTGRES_PASSWORD=...` | Optional. The password of the Docker `db` service (default `jobmatcher`). If you change it, change it in `DATABASE_URL` too |
+
+`.env.example` lists every setting with a short note.
 
 Rules for this file:
 
@@ -55,7 +57,7 @@ Rules for this file:
    ```
 
    If PowerShell refuses to run the script, run `Set-ExecutionPolicy -Scope Process RemoteSigned`
-   once in that window and try again.
+   once in that window and try again. On macOS or Linux, run `source .venv/bin/activate` instead.
 3. Install the packages:
 
    ```
@@ -63,45 +65,55 @@ Rules for this file:
    ```
 
    Use `python -m pip`, not plain `pip`, so the packages go to the same Python that runs the app.
-4. Start the app you want:
+4. Start a PostgreSQL database. Choose one:
+   - **With Docker Desktop** (easiest). Start Docker Desktop, then from the project folder:
+
+     ```
+     docker compose up -d db
+     ```
+
+     This starts only the database, in the background, on `127.0.0.1:5432`. You don't need to set
+     `DATABASE_URL`: the default already points at it. Check it is ready with `docker compose ps`
+     (the `db` line should say `healthy`).
+   - **With your own PostgreSQL server.** Create a user and an empty database for the app, then put its address
+     in `.env`, for example `DATABASE_URL=postgresql://myuser:mypassword@localhost:5432/jobmatcher`.
+     The app creates its table itself the first time it connects.
+5. Start the app:
 
    ```
-   python src/main.py        # console app: a numbered menu in the terminal
-   python src/web_app.py     # web app: then open http://127.0.0.1:5000 in your browser
+   python src/web_app.py
    ```
-5. Stop it with `Ctrl+C`.
+
+   It prints how many saved jobs it loaded. Open http://127.0.0.1:5000 in your browser.
+6. Stop the app with `Ctrl+C`. Stop the Docker database with `docker compose stop db`. Your saved jobs stay in it
+   for next time.
+
+If the database is not running, the app still starts and searches still work, but the Saved jobs page says it could
+not open your saved jobs (see "If something goes wrong").
 
 ## Way 2. Run with Docker
 
 1. Start Docker Desktop and wait until it says it is running. You do not need Python for this way.
-2. From the project folder, start the web app:
+2. From the project folder, start the web app and its database:
 
    ```
    docker compose up --build web
    ```
 
-   The first run builds the image, which takes a few minutes. Open http://127.0.0.1:5000. Stop it with
-   `Ctrl+C`, or run `docker compose down` from another window.
-3. Or start the console app:
+   The first run builds the image and downloads PostgreSQL, which takes a few minutes. The web app waits until the
+   database is ready. Then open http://127.0.0.1:5000.
+3. Stop it with `Ctrl+C`, or run `docker compose down` from another window.
+4. Where your things are kept:
+   - Your `.env` file is read when the container starts. It is never copied into the image.
+   - Saved jobs are in the database, on the Docker volume `pg_data`. They are still there after the containers stop
+     or are removed.
+   - The `logs/` and `resumes/` folders on your computer are shared with the container, so any resume you add is
+     still there after it stops.
+   - `docker compose down -v` deletes the volumes too, which **deletes your saved jobs**. Use it only for a fresh start.
 
-   ```
-   docker compose run --rm console
-   ```
-4. Your `.env` file is read when the container starts and is never copied into the image. The
-   `data/`, `logs/` and `resumes/` folders on your computer are shared with the container, so saved jobs
-   and any resumes you add are still there after it stops.
-
-Plain Docker, without Compose (your saved jobs are not kept this way):
-
-```
-docker build -t jobmatcher .
-docker run -it --rm --env-file .env jobmatcher                                           # console
-docker run --rm --env-file .env -p 127.0.0.1:5000:5000 jobmatcher python src/web_app.py  # web
-```
+Plain `docker run` (without Compose) starts no database, so the Saved jobs page can't open. Use Compose.
 
 ## Using the app
-
-### Web app
 
 1. **Search** page: choose a saved resume or upload a new one, set any preferences (salary range, job type,
    work arrangement, most years of experience asked for), and click **Find matching jobs**. A progress bar
@@ -110,101 +122,37 @@ docker run --rm --env-file .env -p 127.0.0.1:5000:5000 jobmatcher python src/web
    shows why it fits, the skills you have, the skills to build, and two buttons: **View on
    MyCareersFuture** and **Tailor my resume**.
 3. **Tailor my resume**: pick a resume and click **Create tailored resume**. The AI rewords it for that job
-   using only what is already in your resume. Read the result, then click **Download .docx**.
-4. **Saved jobs** page: every search adds its best jobs here. You can filter by text, sort (newest, oldest,
-   best skill match, highest salary), remove one job, or clear them all.
-
-### Console app
-
-The main menu has four options:
-
-```
-1. Find jobs for my resume
-2. Show my saved jobs
-3. View one job in detail
-4. Exit
-```
-
-For option 1: pick your resume from the list, press Enter to leave the salary and experience questions
-blank, and choose `1` (Any) for job type and work arrangement.
+   using only what is already in your resume. Read the result, then click **Download .docx**. A copy is also
+   kept in `resumes/tailored/`.
+4. **What if I learned...?** (button on the matches page): tick a skill the jobs ask for and see how your top list
+   would change, or get a learning plan that aims to rank you higher or to earn more. No AI is used.
+5. **Saved jobs** page: every search adds its best jobs here. It shows how many jobs are at each stage (Saved,
+   Applied, Interviewing, Offer, Rejected). You can filter by text, sort (newest, oldest, best skill match, highest
+   salary), set a status and a note on a job, remove one job, or clear them all.
 
 ### What the match labels mean
 
 | Label | Meaning |
 |---|---|
 | **Strong match** | You meet the job's requirements and have at least 60% of its key skills. |
-| **Fair match** | You meet the requirements, but have fewer than 60% of the key skills. |
-| **Stretch** | The job asks for more years of experience or a higher qualification than you have, or is four or more levels above yours. |
+| **Partial match** | You meet the requirements, but have fewer than 60% of the key skills. |
+| **Missing a requirement** | The job asks for more years of experience or a higher qualification than you have, or is four or more levels above yours. |
 
-Stretch jobs are still shown, ranked below the others. Each card gives the reason in a sentence.
-
-## Run the tests
-
-The tests need no internet and no API key, and never touch your saved jobs. There are 64 in five files:
-
-| File | Tests | What it checks |
-|---|---|---|
-| `tests/test_data_manager.py` | 15 | Missing or corrupt files, backups, saving, queries, removal |
-| `tests/test_io_manager.py` | 11 | Re-asking on bad input, form checks, resume files, portal replies |
-| `tests/test_logic_manager.py` | 21 | Filters, search steps, ranking, match outcome, tailoring rules |
-| `tests/test_main.py` | 7 | The console app from start to finish |
-| `tests/test_web_app.py` | 10 | The web app's pages and actions |
-
-### With Python
-
-With the virtual environment from Way 1 active:
-
-```
-python tests/test_logic_manager.py
-python tests/test_data_manager.py
-python tests/test_io_manager.py
-python tests/test_main.py
-python tests/test_web_app.py
-```
-
-### In Docker
-
-The tests are copied into the image, so they run inside the container. From the project folder, with
-Docker Desktop running:
-
-```
-docker compose run --rm --build tests
-```
-
-`--build` first rebuilds the image (the same one Way 2 uses), so the tests check your latest code; this is
-quick when nothing has changed. It then runs all five files and removes the container when they finish. It takes about 10 seconds, because the tests use fake AI and job portal replies instead
-of the internet. It shows one line per file and a result at the end:
-
-```
-PASS  tests/test_data_manager.py: 15 of 15 tests passed.
-PASS  tests/test_io_manager.py: 11 of 11 tests passed.
-PASS  tests/test_logic_manager.py: 21 of 21 tests passed.
-PASS  tests/test_main.py: 7 of 7 tests passed.
-PASS  tests/test_web_app.py: 10 of 10 tests passed.
-ALL TESTS PASSED
-```
-
-If a test fails, its file shows `FAIL`, the failing test is listed under it, the last line says
-`TESTS FAILED`, and the command returns exit code 1 (0 when everything passes). Use `tests`, not
-`docker run tests`: `tests` is a service in `docker-compose.yml`, not an image name.
-
-### Reading the full output
-
-Running a file directly (`python tests/test_main.py`) shows everything. Each file ends with a line such as
-`15 of 15 tests passed.` Lines starting with `WARNING`, `ERROR` and one `ZeroDivisionError` traceback are
-expected: the tests fake problems on purpose (a corrupt file, the job portal failing, a full disk, a page
-crashing) and check that the app handles them. Only a line with `FAIL` (shown as `[!] FAIL  test_name ...`),
-or a final count lower than the total, means a test failed.
+Jobs missing a requirement are still shown, ranked below the others. Each card gives the reason in a sentence.
 
 ## If something goes wrong
 
 | What you see | What to do |
 |---|---|
-| `ModuleNotFoundError: No module named 'docx'` (or `flask`, `dotenv`) | The packages are not installed for the Python you ran. Run `python -m pip install -r requirements.txt` again, in the same window. |
+| **Saved jobs could not be opened**: the Saved jobs page says "Could not open your saved jobs file", or the terminal says `[!] Could not open your saved jobs file. New searches still work.` | The app cannot reach PostgreSQL. Usually the database is not running: start it with `docker compose up -d db` (Way 1) and check `docker compose ps` says `healthy`, then reload the page. If you use your own server, check `DATABASE_URL` in `.env`. Searches and tailoring still work meanwhile. Each try waits about 5 seconds before it gives up, so the page is slow while the database is down. The real error is in `logs/job_matcher.log`. |
+| `password authentication failed for user "jobmatcher"` in the log | The database password is set only when the `pg_data` volume is first made. If you changed `POSTGRES_PASSWORD` later, put the old one back, or run `docker compose down -v` to start again with an empty database (this deletes your saved jobs). |
+| `docker compose up -d db` says port 5432 is already in use | Another PostgreSQL is running on your computer. Stop it, or use it as your own server (Way 1, step 4), or in `docker-compose.yml` change `"127.0.0.1:5432:5432"` to `"127.0.0.1:5433:5432"` and set `DATABASE_URL=postgresql://jobmatcher:jobmatcher@localhost:5433/jobmatcher` in `.env`. |
+| `ModuleNotFoundError: No module named 'docx'` (or `flask`, `dotenv`, `psycopg`) | The packages are not installed for the Python you ran. Run `python -m pip install -r requirements.txt` again, in the same window. |
 | pip stops with a "Long Path" message | The folder path is too long for Windows. Move the project to a short folder such as `C:\Projects\`, or use Docker. |
-| "Check your internet connection and API key" | This message covers any AI failure. Check that `.env` is in the project folder with the right key, and that no system variable overrides it. The terminal shows the real error. |
+| "The AI isn't set up: GEMINI_API_KEY is not set" (or "was rejected") | The Gemini key is missing from `.env`, or Google refused it. Check that `.env` is in the project folder with the right key, and that no system variable overrides it, then restart the app (a key is read only at start-up). |
+| "The AI couldn't read your resume just now" | The key is fine, but the AI could not be reached or was busy. Wait a minute and try again. The terminal and `logs/job_matcher.log` show the real error. |
 | `failed to connect to the docker API` | Docker Desktop is not running yet. Start it and wait until it is ready. |
 | Port 5000 is already in use | Another copy of the app is running. Stop it, or in `docker-compose.yml` change `"127.0.0.1:5000:5000"` to `"127.0.0.1:5001:5000"` and open port 5001. |
 | The search finds no jobs | The portal may be unreachable, or your preferences are too narrow. Clear the salary and experience fields and try again. |
 
-For how the project is organised (the four layers, the rules, and the tests), read `README.md`.
+For how the project is built (the classes, the design and the tests), read `docs/DESIGN.md`.

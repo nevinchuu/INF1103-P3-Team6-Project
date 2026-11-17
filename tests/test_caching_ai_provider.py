@@ -1,10 +1,10 @@
-"""Tests for CachingAIProvider (src/ai/caching_ai_provider.py): saved AI replies make runs repeatable and work offline."""
+"""Tests for CachingAIProvider (src/ai_layer/caching_ai_provider.py): saved AI replies make runs repeatable and work offline."""
 
 import json
 
-from ai.ai_manager import AIManager
-from ai.base_ai_provider import BaseAIProvider
-from ai.caching_ai_provider import CachingAIProvider
+from ai_layer.ai_manager import AIManager
+from ai_layer.ai_provider import AIProvider
+from ai_layer.caching_ai_provider import CachingAIProvider
 from fakes import FakeAIProvider
 from test_ai_manager import PROFILE
 
@@ -52,14 +52,34 @@ def test_a_missing_corrupt_or_unwritable_cache_never_stops_the_ai(tmp_path):
 
 
 def test_it_stands_in_for_any_provider(tmp_path):
-    inner = FakeAIProvider(PROFILE, label="Google Gemini")
+    inner = FakeAIProvider(PROFILE, name="Google Gemini (gemini-x)")
     cache = CachingAIProvider(inner, str(tmp_path / "cache.json"))
-    assert isinstance(cache, BaseAIProvider) and cache.label == "Google Gemini" and cache.model == inner.model
-    assert AIManager(cache).provider_name == "Google Gemini"
+    assert isinstance(cache, AIProvider) and cache.provider_name == inner.provider_name
+    assert AIManager(cache).provider_name == "Google Gemini (gemini-x)"
 
 
-def test_live_ai_is_the_default_and_the_cache_is_turned_on_by_request(monkeypatch):
+def test_a_cache_can_wrap_another_cache(tmp_path):
+    inner = FakeAIProvider(PROFILE)
+    first = CachingAIProvider(inner, str(tmp_path / "first.json"))
+    second = CachingAIProvider(first, str(tmp_path / "second.json"))
+    assert isinstance(second, AIProvider) and second.provider_name == inner.provider_name
+    manager = AIManager(second)
+    assert manager.extract_candidate_profile("my resume") == PROFILE
+    assert manager.extract_candidate_profile("my resume") == PROFILE  # replayed by the outer cache
+    assert len(inner.calls) == 1 and first.size == 1 and second.size == 1
+
+
+def test_live_ai_is_the_default_and_the_cache_is_turned_on_by_request(monkeypatch, tmp_path):
+    inner = FakeAIProvider(PROFILE)
+    monkeypatch.setattr(AIManager, "create_provider", classmethod(lambda cls, name, model=None: inner))
+    monkeypatch.setenv("AI_CACHE_PATH", str(tmp_path / "cache.json"))
     monkeypatch.delenv("AI_CACHE", raising=False)
-    assert not isinstance(AIManager.from_environment()._provider, CachingAIProvider)  # every record goes to the AI
+    live = AIManager.from_environment()
+    live.extract_candidate_profile("my resume")
+    live.extract_candidate_profile("my resume")
+    assert len(inner.calls) == 2  # every record goes to the AI
     monkeypatch.setenv("AI_CACHE", "on")
-    assert isinstance(AIManager.from_environment()._provider, CachingAIProvider)
+    cached = AIManager.from_environment()
+    cached.extract_candidate_profile("my resume")
+    cached.extract_candidate_profile("my resume")
+    assert len(inner.calls) == 3  # the second one was replayed from the cache

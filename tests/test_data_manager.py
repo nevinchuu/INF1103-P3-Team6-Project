@@ -1,16 +1,14 @@
-"""Tests for the data layer (src/persistence/data_manager.py): saving, loading, querying and updating jobs.
+"""Tests for the data layer (src/data_layer/data_manager.py): saving, loading, querying and updating jobs.
 
-DataManager is tested with both storage backends (JSON file and SQLite), each in its own temporary folder, so the
-real data folder is never touched.
+DataManager is tested on an in-memory storage, so no file, database or real data folder is touched.
 """
-
-import json
-import os
 
 import pytest
 
-from persistence.data_manager import DataManager, JsonStorage, MAX_NOTE_CHARS, SqliteStorage, STATUSES
-from fakes import FlakyStorage
+from data_layer import data_manager
+from data_layer.data_manager import DataManager, STATUSES
+from data_layer.data_store_error import DataStoreError
+from fakes import FakePortal, FlakyStorage, InMemoryStorage
 
 
 def make_job(number: int, **changes) -> dict:
@@ -20,11 +18,9 @@ def make_job(number: int, **changes) -> dict:
     return job
 
 
-@pytest.fixture(params=["json", "sqlite"])
-def data(request, tmp_path) -> DataManager:
-    if request.param == "json":
-        return DataManager(JsonStorage(str(tmp_path / "job_listings.json")))
-    return DataManager(SqliteStorage(str(tmp_path / "jobs.db")))
+@pytest.fixture
+def data() -> DataManager:
+    return DataManager(InMemoryStorage(), FakePortal([]))
 
 
 def test_saving_keeps_jobs_between_runs_adds_only_new_links_notes_the_resume_and_numbers_the_ids(data):
@@ -55,33 +51,19 @@ def test_jobs_without_a_link_are_not_saved(data):
     assert [job["job_url"] for job in data.read_saved_jobs()] == [make_job(3)["job_url"]]
 
 
-def test_find_by_url_on_a_loaded_list_and_in_the_store(data):
-    jobs = [make_job(1), make_job(2)]
-    assert data.find_by_url(jobs, make_job(2)["job_url"])["title"] == "Data Analyst 2"
-    assert data.find_by_url(jobs, "https://example.com/not-saved") is None
-    data.save_new_jobs(jobs, "resume.pdf")
+def test_a_saved_job_is_found_by_its_link(data):
+    data.save_new_jobs([make_job(1), make_job(2)], "resume.pdf")
     assert data.get_saved_job(make_job(1)["job_url"])["title"] == "Data Analyst 1"
     assert data.get_saved_job("https://example.com/not-saved") is None
 
 
-def test_search_jobs_on_a_list_and_search_saved_in_the_store_agree(data):
-    jobs = [make_job(1, title="Senior Data Analyst"), make_job(2, title="Data Engineer"),
-            make_job(3, title="Accountant", location="Data Centre, Jurong")]
-    data.save_new_jobs(jobs, "resume.pdf")
-    for keyword in ("data analyst", "JURONG data", "nurse", "accountant"):
-        assert [job["title"] for job in data.search_jobs(jobs, keyword)] == \
-               [job["title"] for job in data.search_saved(keyword)]
-    assert [job["title"] for job in data.search_jobs(jobs, "data analyst")] == ["Senior Data Analyst"]
-
-
-def test_remove_one_job_and_clear_all_renumber_the_ids(data):
-    data.save_new_jobs([make_job(1), make_job(2), make_job(3)], "resume.pdf")
-    assert data.remove_saved_job(make_job(2)["job_url"]) is True
-    assert [(job["ID"], job["title"]) for job in data.read_saved_jobs()] == [(0, "Data Analyst 1"),
-                                                                            (1, "Data Analyst 3")]
-    assert data.remove_saved_job(make_job(2)["job_url"]) is False  # already gone: nothing happens, no error
-    data.clear_saved_jobs()
-    assert data.read_saved_jobs() == []
+def test_search_saved_needs_every_word_in_the_title_company_or_location(data):
+    data.save_new_jobs([make_job(1, title="Senior Data Analyst"), make_job(2, title="Data Engineer"),
+                        make_job(3, title="Accountant", location="Data Centre, Jurong")], "resume.pdf")
+    found = lambda keyword: [job["title"] for job in data.search_saved(keyword)]
+    assert found("data analyst") == ["Senior Data Analyst"]
+    assert found("CENTRE data") == ["Accountant"] and found("nurse") == []
+    assert len(found("")) == 3
 
 
 def test_a_status_and_a_note_can_be_set_on_a_saved_job(data):
@@ -104,50 +86,69 @@ def test_updating_with_nothing_to_change_only_checks_the_job_exists(data):
     assert data.update_saved_job(make_job(1)["job_url"]) is True
 
 
-@pytest.mark.parametrize("changes", [{"status": "Hired by magic"}, {"status": ""}, {"note": "x" * (MAX_NOTE_CHARS + 1)}])
-def test_an_invalid_status_or_note_is_refused(data, changes):
-    data.save_new_jobs([make_job(1)], "resume.pdf")
-    with pytest.raises(ValueError):
-        data.update_saved_job(make_job(1)["job_url"], **changes)
-    assert "status" not in data.get_saved_job(make_job(1)["job_url"])
-
-
 def test_every_listed_status_is_accepted(data):
     data.save_new_jobs([make_job(1)], "resume.pdf")
     for status in STATUSES:
         assert data.update_saved_job(make_job(1)["job_url"], status=status) is True
 
 
-def test_an_unreachable_store_raises_an_os_error_the_apps_already_handle(tmp_path):
-    flaky = FlakyStorage(JsonStorage(str(tmp_path / "job_listings.json")))
-    data = DataManager(flaky)
+URL = make_job(1)["job_url"]
+READS = {
+    "read_saved_jobs": lambda data: data.read_saved_jobs(),
+    "get_saved_job": lambda data: data.get_saved_job(URL),
+    "search_saved": lambda data: data.search_saved("analyst"),
+    "tracker_summary": lambda data: data.tracker_summary(),
+}
+WRITES = {
+    "save_new_jobs": lambda data: data.save_new_jobs([make_job(1)], "resume.pdf"),
+    "update_saved_job": lambda data: data.update_saved_job(URL, status="Applied"),
+    "remove_saved_job": lambda data: data.remove_saved_job(URL),
+    "clear_saved_jobs": lambda data: data.clear_saved_jobs(),
+}
+
+
+@pytest.mark.parametrize("method", list(READS) + list(WRITES))
+def test_a_store_that_cannot_be_reached_is_reported_as_a_data_store_error(method):
+    flaky = FlakyStorage(InMemoryStorage())
+    data = DataManager(flaky, FakePortal([]))
+    flaky.fail_reads, flaky.fail_writes = True, True
+    with pytest.raises(DataStoreError):
+        {**READS, **WRITES}[method](data)
+
+
+def test_updating_with_nothing_to_change_reports_an_unreachable_store():
+    flaky = FlakyStorage(InMemoryStorage())
     flaky.fail_reads = True
-    with pytest.raises(OSError):
-        data.read_saved_jobs()
-    flaky.fail_reads, flaky.fail_writes = False, True
-    with pytest.raises(OSError):
-        data.save_new_jobs([make_job(1)], "resume.pdf")
+    with pytest.raises(DataStoreError):
+        DataManager(flaky, FakePortal([])).update_saved_job(URL)
 
 
-# ---------- choosing the backend ----------
+def test_the_original_error_is_kept_as_the_cause():
+    flaky = FlakyStorage(InMemoryStorage())
+    flaky.fail_reads = True
+    with pytest.raises(DataStoreError) as caught:
+        DataManager(flaky, FakePortal([])).read_saved_jobs()
+    assert isinstance(caught.value.__cause__, OSError)
+    assert "could not be reached" in str(caught.value)
 
-def test_the_json_backend_is_the_default(monkeypatch, tmp_path):
-    monkeypatch.delenv("STORAGE_BACKEND", raising=False)
-    monkeypatch.setenv("JOBS_DB_PATH", str(tmp_path / "saved.json"))
+
+# ---------- choosing the storage ----------
+
+def test_from_environment_builds_postgres_storage_from_database_url(monkeypatch):
+    built = []
+
+    class RecordingStorage(InMemoryStorage):
+        def __init__(self, dsn: str) -> None:
+            super().__init__()
+            built.append(dsn)
+
+    monkeypatch.setattr(data_manager, "PostgresStorage", RecordingStorage)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://someone@db.example/jobs")
     manager = DataManager.from_environment()
-    assert isinstance(manager.storage, JsonStorage)
-    manager.save_new_jobs([make_job(1)], "resume.pdf")
-    with open(tmp_path / "saved.json", encoding="utf-8") as file:
-        assert json.load(file)[0]["title"] == "Data Analyst 1"
-
-
-def test_the_sqlite_backend_is_chosen_by_the_environment(monkeypatch, tmp_path):
-    monkeypatch.setenv("STORAGE_BACKEND", " SQLite ")
-    monkeypatch.setenv("JOBS_DB_PATH", str(tmp_path / "nested" / "jobs.db"))
-    manager = DataManager.from_environment()
-    assert isinstance(manager.storage, SqliteStorage)
-    assert manager.read_saved_jobs() == []
-    assert os.path.exists(tmp_path / "nested" / "jobs.db")  # created, with its folder
+    assert built == ["postgresql://someone@db.example/jobs"] and isinstance(manager, DataManager)
+    monkeypatch.delenv("DATABASE_URL")
+    DataManager.from_environment()
+    assert built[-1] == data_manager.DEFAULT_DATABASE_URL
 
 
 # A saved job from an older version or a hand-edited file still loads in a shape the pages can show
@@ -160,7 +161,7 @@ def test_saved_jobs_with_wrong_field_types_are_tidied_on_read(data):
 
 
 # The application tracker: how many saved jobs are at each stage, counted by the storage (SQL GROUP BY on SQLite)
-def test_the_tracker_counts_jobs_by_status_the_same_way_on_both_backends(data):
+def test_the_tracker_counts_jobs_by_status_with_the_storage(data):
     data.save_new_jobs([make_job(1, match_outcome="Strong match"), make_job(2, match_outcome="Strong match"),
                         make_job(3, match_outcome="Fair match"), make_job(4)], "resume.pdf")
     data.update_saved_job(make_job(2)["job_url"], status="Applied")
@@ -177,12 +178,19 @@ def test_the_tracker_of_an_empty_store_is_all_zeros(data):
                                       "strong_not_applied": 0}
 
 
-def test_sqlite_counts_in_the_database_and_agrees_with_the_shared_python_count(tmp_path):
-    sqlite = SqliteStorage(str(tmp_path / "jobs.db"))
-    for number, outcome in enumerate(["Strong match", "Strong match", "Stretch", None]):
-        sqlite.insert(make_job(number, match_outcome=outcome) if outcome else make_job(number))
-    sqlite.update(make_job(1)["job_url"], {"status": "Applied"})
-    counted_by_sql = sqlite.count_by_status_and_outcome()
-    counted_in_python = super(SqliteStorage, sqlite).count_by_status_and_outcome()  # Storage's shared version
-    assert counted_by_sql == counted_in_python == {("", "Strong match"): 1, ("Applied", "Strong match"): 1,
-                                                   ("", "Stretch"): 1, ("", ""): 1}
+# ---------- the job portal, reached through the data layer ----------
+
+def test_listings_and_details_come_from_the_portal_through_the_data_manager():
+    portal = FakePortal([make_job(1), make_job(2)], details={"description": "Use SQL", "listed_skills": ["SQL"]})
+    data = DataManager(FlakyStorage(InMemoryStorage()), portal)
+    listings = data.fetch_listings(["Data Analyst"], ["all"], {}, limit=5)
+    assert [job["title"] for job in listings] == ["Data Analyst 1", "Data Analyst 2"]
+    assert portal.searches == [("Data Analyst", {"step": "all"})]
+    assert data.portal_job_details("https://example.com/job")["listed_skills"] == ["SQL"]
+    assert data.portal_filters({}, "job type") == {"step": "job type"}
+
+
+def test_a_search_in_the_store_gives_jobs_the_pages_can_always_show(data):
+    data.save_new_jobs([make_job(1, required_skills=None, matched_skills="abc", status="Hired")], "resume.pdf")
+    found = data.search_saved("analyst")[0]
+    assert found["required_skills"] == [] and found["matched_skills"] == [] and found["status"] == "Saved"

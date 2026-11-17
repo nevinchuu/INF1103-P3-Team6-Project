@@ -5,7 +5,7 @@ import pytest
 import requests
 from fakes import FakePortal, StubHttp
 
-from services.job_portal import JobPortal, PORTAL_TELECOMMUTING
+from data_layer.job_portal import DETAIL_ATTEMPTS, JobPortal, PORTAL_TELECOMMUTING
 
 GOOD_URL = "https://www.mycareersfuture.gov.sg/job/it/data-analyst-acme-5365191b6ddd018b70f7b8149c0a20ca"
 LISTING = {"title": "Data Analyst", "metadata": {"jobDetailsUrl": GOOD_URL}}
@@ -19,6 +19,13 @@ def portal(post=None, get=None) -> tuple[JobPortal, StubHttp]:
 def test_a_broken_listing_is_skipped_and_a_good_one_kept():
     mcf, _ = portal(post=[{"results": [LISTING, {"title": "Broken", "employmentTypes": "not a list"}]}])
     assert [job["title"] for job in mcf.search("Data Analyst")] == ["Data Analyst"]
+
+
+# The posting date (for sorting the results newest first) comes from the listing's metadata
+def test_a_listing_keeps_its_posting_date():
+    dated = {**LISTING, "metadata": {**LISTING["metadata"], "newPostingDate": "2026-11-12"}}
+    mcf, _ = portal(post=[{"results": [dated, LISTING]}])
+    assert [job["posted_date"] for job in mcf.search("Data Analyst")] == ["2026-11-12", ""]
 
 
 def test_a_portal_that_keeps_failing_gives_none_after_three_tries():
@@ -45,7 +52,7 @@ def test_no_listings_is_an_empty_list_not_a_failure():
 
 def test_the_search_words_and_filters_go_in_the_request_body():
     mcf, http = portal(post=[{"results": []}])
-    mcf.search("Data Analyst", limit=7, portal_filters={"salary": 3000})
+    mcf.search("Data Analyst", limit=7, filters={"salary": 3000})
     _, _, options = http.calls[0]
     assert options["json"] == {"search": "Data Analyst", "salary": 3000} and options["params"] == {"limit": 7}
 
@@ -58,9 +65,50 @@ def test_job_details_in_an_unexpected_format_are_treated_like_no_reply(payload):
 
 def test_job_details_are_cleaned_and_a_closed_job_is_noticed():
     mcf, _ = portal(get=[{"description": "<p>Use SQL</p>", "skills": [{"skill": "SQL"}]}])
-    assert mcf.details(GOOD_URL) == {"description": "Use SQL", "listed_skills": ["SQL"], "is_open": True}
+    assert mcf.details(GOOD_URL) == {"description": "Use SQL", "listed_skills": ["SQL"], "is_open": True,
+                                     "min_years_experience": None}
+    # The years of experience come from the posting (the search results leave them out)
+    mcf, _ = portal(get=[{"description": "x", "skills": [], "minimumYearsExperience": 2}])
+    assert mcf.details(GOOD_URL)["min_years_experience"] == 2
     mcf, _ = portal(get=[{"description": "x", "skills": [], "status": {"jobStatus": "Closed"}}])
     assert mcf.details(GOOD_URL)["is_open"] is False
+
+
+# MyCareersFuture marks a job posted again as "Re-open": it is live, so it must not be shown as closed. A job is
+# closed only by a closed status or an expiry date that has passed
+@pytest.mark.parametrize("status, expiry, is_open", [
+    ("Open", "2999-12-31", True),
+    ("Re-open", "2999-12-31", True),
+    ("Re-open", "", True),
+    (None, None, True),
+    ("Closed", "2999-12-31", False),
+    ("Expired", "", False),
+    ("Open", "2000-01-01", False),
+])
+def test_a_job_is_closed_only_by_a_closed_status_or_a_past_expiry_date(status, expiry, is_open):
+    posting = {"description": "x", "skills": [], "status": {"id": 103, "jobStatus": status},
+               "metadata": {"expiryDate": expiry}}
+    mcf, _ = portal(get=[posting])
+    assert mcf.details(GOOD_URL)["is_open"] is is_open
+
+
+# The portal answers 429 when many postings are read at once. A posting not read leaves the AI only the employer's
+# skill tags (one search read none of 40), so a busy reply is waited out, as long as the portal asks, and retried
+def test_a_busy_portal_is_waited_out_and_the_posting_read():
+    http = StubHttp(get=[({}, 429, {"Retry-After": "3"}), ({}, 503), {"description": "Python and SQL", "skills": []}])
+    waits = []
+    mcf = JobPortal(http=http, sleep=waits.append)
+    assert mcf.details(GOOD_URL)["description"] == "Python and SQL"
+    assert waits == [3.0, 2.0] and len(http.calls) == 3  # Retry-After, then 1, 2, 4... seconds
+
+
+def test_a_portal_that_stays_busy_gives_up_and_a_missing_job_is_not_retried():
+    http = StubHttp(get=[({}, 429)])  # every reply is 429
+    mcf = JobPortal(http=http, sleep=lambda seconds: None)
+    assert mcf.details(GOOD_URL) is None and len(http.calls) == DETAIL_ATTEMPTS
+    http = StubHttp(get=[({}, 404)])  # the job was taken down: asking again won't help
+    mcf = JobPortal(http=http, sleep=lambda seconds: None)
+    assert mcf.details(GOOD_URL) is None and len(http.calls) == 1
 
 
 def test_details_need_a_real_job_link_and_survive_network_errors():
@@ -78,6 +126,18 @@ def test_the_portals_filters_for_each_search_step():
     assert mcf.filters_for(preferences, "job type") == {"employmentTypes": ["Full Time", "Permanent"]}
     assert mcf.filters_for(preferences, "general") == {}
     assert mcf.filters_for(None, "all") == {}
+
+
+# The search for jobs at the candidate's levels: every step keeps the level filter
+def test_position_levels_are_kept_at_every_search_step():
+    mcf, _ = portal()
+    levels = ["Fresh/entry level", "Junior Executive"]
+    preferences = {"job_type": "Full Time", "min_salary": 3000, "position_levels": levels}
+    assert mcf.filters_for(preferences, "all") == {
+        "positionLevels": levels, "employmentTypes": ["Full Time", "Permanent"], "salary": 3000}
+    assert mcf.filters_for(preferences, "job type") == {"positionLevels": levels,
+                                                        "employmentTypes": ["Full Time", "Permanent"]}
+    assert mcf.filters_for(preferences, "general") == {"positionLevels": levels}
 
 
 # fetch_listings is written once in JobPortal, so it works the same on every portal (LSP)
@@ -122,7 +182,7 @@ def test_the_last_listings_of_a_search_are_used_when_the_portal_is_down(tmp_path
                      saved_listings_path=path)
     assert [job["title"] for job in down.search("data analyst ")] == ["Data Analyst"]  # same search
     assert down.search("Accountant") is None  # never searched before: still a failure
-    assert down.search("Data Analyst", portal_filters={"salary": 9000}) is None  # different filters
+    assert down.search("Data Analyst", filters={"salary": 9000}) is None  # different filters
 
 
 def test_a_corrupt_listings_file_is_ignored(tmp_path):

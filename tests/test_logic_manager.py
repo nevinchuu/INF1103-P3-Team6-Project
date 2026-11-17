@@ -1,4 +1,4 @@
-"""Tests for the logic layer (src/logic/logic_manager.py, tailoring_guard.py): filtering, ranking rules, outcomes and
+"""Tests for the logic layer (src/logic_layer/logic_manager.py, tailoring_guard.py): filtering, ranking rules, outcomes and
 tailoring checks.
 
 Run with python -m pytest. No AI, network or files are involved: jobs are hard-coded sample AI records.
@@ -6,9 +6,8 @@ Run with python -m pytest. No AI, network or files are involved: jobs are hard-c
 
 import pytest
 
-from io_layer import io_manager
-from logic import logic_manager
-from logic.logic_manager import LogicManager
+from logic_layer import logic_manager
+from logic_layer.logic_manager import LogicManager
 
 LOGIC = logic_manager.LogicManager()
 
@@ -49,38 +48,46 @@ def matched(*skills):
     return [{"job_skill": skill, "candidate_skill": skill} for skill in skills]
 
 
-# 1. Links: only https links on MyCareersFuture are accepted, checked without going online
-def test_job_links_must_be_https_on_mycareersfuture():
-    assert LOGIC.is_valid_job_url(GOOD_URL)
-    assert not LOGIC.is_valid_job_url(GOOD_URL.replace("https", "http"))
-    assert not LOGIC.is_valid_job_url("https://mycareersfuture.gov.sg.evil.com/job/1")
-    assert not LOGIC.is_valid_job_url("N/A")
-    assert not LOGIC.is_valid_job_url(None)
-    assert LOGIC.filter_reason(make_job(job_url="N/A"), NO_FILTERS) == "bad link"
+def reason_removed(job: dict, filters: dict) -> str:
+    """Why the job is removed, e.g. "salary", or "" if it is kept (through the public count_removed)."""
+    counts = LOGIC.count_removed([job], filters)
+    assert LOGIC.passes_filters(job, filters) == (not counts)
+    return next(iter(counts), "")
+
+
+# 1. A job with a link that is not an https MyCareersFuture link is removed (the link rules are tested with the
+# InputValidator, in test_input_validator.py)
+def test_a_job_with_a_bad_link_is_removed():
+    assert reason_removed(make_job(), NO_FILTERS) == ""
+    assert reason_removed(make_job(job_url="N/A"), NO_FILTERS) == "bad link"
+    assert reason_removed(make_job(job_url=GOOD_URL.replace("https", "http")), NO_FILTERS) == "bad link"
+    # Only an https MyCareersFuture link counts: not a look-alike host, a missing link or one that can't be read
+    for bad in ("https://mycareersfuture.gov.sg.evil.com/job/1", None, "https://[bad"):
+        assert reason_removed(make_job(job_url=bad), NO_FILTERS) == "bad link"
 
 
 # 2. Salary: a job is removed only if its whole pay range is outside the user's range
 def test_salary_filter_keeps_overlapping_and_unstated_pay():
     filters = {**NO_FILTERS, "min_salary": 5000, "max_salary": 8000}
-    assert LOGIC.filter_reason(make_job(min_salary=4000, max_salary=6000), filters) == ""
-    assert LOGIC.filter_reason(make_job(min_salary=3000, max_salary=4500), filters) == "salary"
-    assert LOGIC.filter_reason(make_job(min_salary=9000, max_salary=12000), filters) == "salary"
+    assert reason_removed(make_job(min_salary=4000, max_salary=6000), filters) == ""
+    assert reason_removed(make_job(min_salary=3000, max_salary=4500), filters) == "salary"
+    assert reason_removed(make_job(min_salary=9000, max_salary=12000), filters) == "salary"
     # 0 means the job doesn't state a salary, so it is kept
-    assert LOGIC.filter_reason(make_job(min_salary=0, max_salary=0), filters) == ""
+    assert reason_removed(make_job(min_salary=0, max_salary=0), filters) == ""
 
 
 # 3. Job type and work arrangement, including the special cases
 def test_job_type_and_work_arrangement_filters():
     full_time = {**NO_FILTERS, "job_type": "Full Time"}
     # "Permanent" jobs on MyCareersFuture are full-time
-    assert LOGIC.filter_reason(make_job(employment_types=["Permanent"]), full_time) == ""
-    assert LOGIC.filter_reason(make_job(employment_types=["Contract"]), full_time) == "job type"
+    assert reason_removed(make_job(employment_types=["Permanent"]), full_time) == ""
+    assert reason_removed(make_job(employment_types=["Contract"]), full_time) == "job type"
 
     remote = {**NO_FILTERS, "work_arrangement": "Remote"}
-    assert LOGIC.filter_reason(make_job(work_arrangement="Remote"), remote) == ""
-    assert LOGIC.filter_reason(make_job(work_arrangement="Onsite"), remote) == "work arrangement"
+    assert reason_removed(make_job(work_arrangement="Remote"), remote) == ""
+    assert reason_removed(make_job(work_arrangement="Onsite"), remote) == "work arrangement"
     # A job that doesn't say is kept rather than wrongly removed
-    assert LOGIC.filter_reason(make_job(work_arrangement="Not specified"), remote) == ""
+    assert reason_removed(make_job(work_arrangement="Not specified"), remote) == ""
 
 
 # 4. count_removed counts each removed job once, under the first filter it fails
@@ -137,18 +144,20 @@ def test_job_above_candidate_level_ranks_lower():
     assert [job["title"] for job in ranked] == ["Better match, junior", "Entry role", "Better match, senior", "Senior role"]
     # Unknown or missing levels count as no gap
     executive = {**PROFILE, "seniority_level": "Executive"}
-    assert LOGIC.requirement_gaps(executive, make_job(position_levels=["Unknown"]))[2] == 0
-    assert LOGIC.requirement_gaps(executive, make_job())[2] == 0
+    assert LogicManager.job_fit(executive, make_job(position_levels=["Unknown"]))["level_gap"] == 0
+    assert LogicManager.job_fit(executive, make_job())["level_gap"] == 0
 
 
-# 7. More matched skills ranks first, even when a job with a short skill list has a higher share
-def test_more_matched_skills_beats_a_higher_share():
+# 7. Within the same outcome, more matched skills ranks first, even when a job with a short skill list has a higher
+# share (both Fair here; a Strong match always ranks above a Fair one, see test_a_strong_match_always_ranks_above_a_fair_one)
+def test_within_the_same_outcome_more_matched_skills_beats_a_higher_share():
     jobs = [
-        make_job(title="2 of 3", required_skills=["Python", "SQL", "Excel"], matched_skills=matched("Python", "SQL")),
-        make_job(title="3 of 6", required_skills=["Python", "SQL", "Excel", "Tableau", "R", "Git"],
+        make_job(title="2 of 4", required_skills=["Python", "SQL", "Excel", "Java"], matched_skills=matched("Python", "SQL")),
+        make_job(title="3 of 7", required_skills=["Python", "SQL", "Excel", "Tableau", "R", "Git", "AWS"],
                  matched_skills=matched("Python", "SQL", "Excel")),
     ]
-    assert [job["title"] for job in LOGIC.filter_and_rank(PROFILE, jobs, NO_FILTERS, top_n=2)] == ["3 of 6", "2 of 3"]
+    ranked = LOGIC.filter_and_rank(PROFILE, jobs, NO_FILTERS, top_n=2)
+    assert [(job["title"], job["match_outcome"]) for job in ranked] == [("3 of 7", "Fair match"), ("2 of 4", "Fair match")]
 
 
 # 8. Jobs that match none of the candidate's skills are not shown
@@ -159,7 +168,7 @@ def test_jobs_with_no_matched_skills_are_hidden():
 
 # 9. A tailored resume shows a matched skill if the AI's quote is really in it, or else if the
 #    candidate's own skill name is; a made-up quote alone doesn't count
-def test_skills_shown_checks_quotes_and_falls_back_to_skill_names():
+def test_the_skills_a_tailored_resume_shows_are_checked_by_quote_and_falls_back_to_skill_names():
     card = [{"job_skill": "Spreadsheets", "candidate_skill": "Microsoft Excel"},
             {"job_skill": "SQL", "candidate_skill": "SQL"},
             {"job_skill": "Python", "candidate_skill": "Python"}]
@@ -167,8 +176,10 @@ def test_skills_shown_checks_quotes_and_falls_back_to_skill_names():
     evidence = [{"job_skill": "SQL", "evidence": "Wrote SQL queries"},
                 {"job_skill": "Spreadsheets", "evidence": "a quote that is not in the resume"},
                 {"job_skill": "Python", "evidence": "Built Python scripts"}]
-    assert LOGIC.skills_shown(card, evidence, parts) == {"SQL": "Wrote SQL queries",
-                                                                  "Spreadsheets": "Microsoft Excel"}
+    job = make_job(resume="cv.pdf", matched_skills=card)
+    tailored = {"removed_skills": [], "skill_evidence": evidence, "parts": parts}
+    assert LOGIC.tailoring_skills(job, True, [], tailored)["shown"] == {"SQL": "Wrote SQL queries",
+                                                                        "Spreadsheets": "Microsoft Excel"}
 
 
 # 10. Match outcome: a job the candidate misses a requirement for is a stretch, whatever the skills;
@@ -217,32 +228,35 @@ def test_job_keywords_split_shown_and_missing_skills():
 
 
 def make_paragraph(paragraph_id, text, kind="bullet", chars_per_line=50):
-    """A paragraph like io_manager.read_docx_paragraphs returns."""
+    """A paragraph like io_manager.read_paragraphs returns."""
     return {"id": paragraph_id, "text": text, "kind": kind, "editable": True, "chars_per_line": chars_per_line}
 
 
 # 13. Tailoring never empties a job's points: if every bullet under a heading would be removed,
 #     none of them are, and a note says why; removing some of them is fine
-def test_keep_bullet_groups_never_empties_a_heading():
+def test_the_word_edits_never_empty_a_heading():
     paragraphs = [make_paragraph(0, "Data Analyst Intern\t2024", kind="entry"), make_paragraph(1, "Built dashboards"),
                   make_paragraph(2, "Wrote SQL"), make_paragraph(3, "Cashier\t2023", kind="entry"),
                   make_paragraph(4, "Served customers"), make_paragraph(5, "Handled payments")]
-    edits = {1: "", 2: "", 4: "", 5: "Took card and cash payments"}
-    kept, notes = LOGIC.keep_bullet_groups(edits, paragraphs)
+    edits = [{"paragraph": 1, "text": "", "reason": "off topic"}, {"paragraph": 2, "text": "", "reason": "off topic"},
+             {"paragraph": 4, "text": "", "reason": "off topic"},
+             {"paragraph": 5, "text": "Took card and cash payments", "reason": "clearer"}]
+    kept, reasons, removed_skills, notes = LOGIC.ground_docx_edits(edits, paragraphs, "Took cash", [])
     assert kept == {4: "", 5: "Took card and cash payments"}
     assert notes == [{"kind": "bullet_group_kept", "heading": "Data Analyst Intern"}]
-    assert edits == {1: "", 2: "", 4: "", 5: "Took card and cash payments"}  # the caller's edits are not changed
+    assert removed_skills == [] and reasons[5] == "clearer"
 
 
 # 14. Tailoring keeps the number of pages: a rewrite needing extra lines is kept only if shorter
 #     rewrites free at least as many lines
-def test_fit_edits_to_page_count_keeps_the_number_of_lines():
+def test_the_word_edits_keep_the_number_of_lines():
     paragraphs = [make_paragraph(1, "x" * 100), make_paragraph(2, "y" * 40)]
-    longer = {2: "z" * 120}  # 1 line becomes 3, and nothing is freed
-    kept, notes = LOGIC.fit_edits_to_page_count(longer, paragraphs)
+    longer = [{"paragraph": 2, "text": "z" * 120, "reason": "more detail"}]  # 1 line becomes 3, and nothing is freed
+    kept, _, _, notes = LOGIC.ground_docx_edits(longer, paragraphs, "", [])
     assert kept == {} and notes == [{"kind": "edit_too_long", "start": "y" * 40}]
     # Removing the 2-line paragraph frees enough lines for the longer one
-    kept, notes = LOGIC.fit_edits_to_page_count({1: "", 2: "z" * 80}, paragraphs)
+    both = [{"paragraph": 1, "text": "", "reason": "off topic"}, {"paragraph": 2, "text": "z" * 80, "reason": "more detail"}]
+    kept, _, _, notes = LOGIC.ground_docx_edits(both, paragraphs, "", [])
     assert kept == {1: "", 2: "z" * 80} and notes == []
 
 
@@ -294,13 +308,10 @@ def test_match_outcome_handles_unknown_education_and_no_key_skills():
 
 # 20. Values the logic layer copies (so it never imports another layer) still match the other layers
 def test_copied_values_still_match_the_other_layers():
-    from ai import ai_manager  # imported here: only this test needs the AI layer's lists
-    assert logic_manager.EDUCATION_LEVELS == ai_manager.EDUCATION_LEVELS == io_manager.EDUCATION_LEVELS
+    from ai_layer import ai_manager  # imported here: only this test needs the AI layer's lists
+    assert logic_manager.EDUCATION_LEVELS == ai_manager.EDUCATION_LEVELS
     assert logic_manager.SENIORITY_LEVELS == ai_manager.SENIORITY_LEVELS
-    assert logic_manager.ANY == io_manager.ANY
-    assert (logic_manager.MAX_SALARY, logic_manager.MAX_EXPERIENCE_YEARS) == (io_manager.MAX_SALARY,
-                                                                              io_manager.MAX_EXPERIENCE_YEARS)
-    from persistence import data_manager
+    from data_layer import data_manager
     assert data_manager.STRONG_MATCH == logic_manager.OUTCOME_STRONG
 
 
@@ -313,31 +324,46 @@ def test_a_job_card_applies_only_to_the_resume_that_found_it():
     assert same_resume is True and same_job is job
     assert other_resume is False and other_job["matched_skills"] == []
     assert job["matched_skills"] == [{"job_skill": "SQL", "candidate_skill": "SQL"}]  # the caller's job is unchanged
-    assert LOGIC.tailoring_skills(job, True, [], []) == {
-        "matched": [{"job_skill": "SQL", "candidate_skill": "SQL"}], "not_added": ["Python"]}
-    assert LOGIC.tailoring_skills(job, False, ["Python", "C++"], ["Rust"]) == {
-        "matched": [], "not_added": ["Python", "C++", "Rust"]}
+    nothing_removed = {"removed_skills": [], "skill_evidence": [], "parts": ["Wrote SQL queries"]}
+    assert LOGIC.tailoring_skills(job, True, [], nothing_removed) == {
+        "matched": [{"job_skill": "SQL", "candidate_skill": "SQL"}], "not_added": ["Python"],
+        "shown": {"SQL": "SQL"}}
+    # A removed skill the job never asked for ("Rust") is not listed as one the job wants
+    assert LOGIC.tailoring_skills(job, False, ["Python", "C++"], {**nothing_removed, "removed_skills": ["Rust", "C++"]}) == {
+        "matched": [], "not_added": ["Python", "C++"], "shown": {}}
 
 
 # ---------- the ranking rules, one by one (each takes a job's fit and returns a sort value) ----------
 
-def fit(**changes) -> dict:
-    values = {"experience_gap": 0, "education_ok": True, "level_gap": 0, "matched": 3, "required": 4}
-    values.update(changes)
-    values["share"] = values["matched"] / values["required"] if values["required"] else 0
-    return values
+RANKED_PROFILE = {"highest_qualification": "Diploma", "years_of_experience": 1, "seniority_level": "Fresh/entry level"}
 
 
-@pytest.mark.parametrize("rule, better, worse", [
-    (LogicManager.rank_by_experience_gap, fit(experience_gap=0), fit(experience_gap=2)),
-    (LogicManager.rank_by_education, fit(education_ok=True), fit(education_ok=False)),
-    (LogicManager.rank_by_far_above_level, fit(level_gap=3), fit(level_gap=logic_manager.FAR_ABOVE_LEVELS)),
-    (LogicManager.rank_by_skill_count, fit(matched=4), fit(matched=2)),
-    (LogicManager.rank_by_skill_share, fit(matched=2, required=2), fit(matched=2, required=4)),
-    (LogicManager.rank_by_level_gap, fit(level_gap=1), fit(level_gap=2)),
+@pytest.mark.parametrize("place, better, worse", [
+    (0, make_job(min_years_experience=1), make_job(min_years_experience=3)),  # experience
+    (1, make_job(min_education="Diploma"), make_job(min_education="Master's")),  # education
+    (2, make_job(position_levels=["Executive"]), make_job(position_levels=["Manager"])),  # far above the level
+    (3, make_job(required_skills=["Python", "SQL"], matched_skills=matched("Python", "SQL")),  # Strong before Fair
+     make_job(required_skills=["Python", "SQL", "Excel", "Tableau"], matched_skills=matched("Python"))),
+    (4, make_job(matched_skills=matched("Python", "SQL", "Excel")), make_job(matched_skills=matched("Python"))),
+    (5, make_job(required_skills=["Python", "SQL"], matched_skills=matched("Python", "SQL")),
+     make_job(required_skills=["Python", "SQL", "Excel", "Tableau"], matched_skills=matched("Python", "SQL"))),
+    (6, make_job(position_levels=["Junior Executive"]), make_job(position_levels=["Executive"])),  # level gap
 ])
-def test_each_rule_sorts_the_better_fit_first(rule, better, worse):
-    assert rule(better) < rule(worse)
+def test_each_standard_key_sorts_the_better_fit_first(place, better, worse):
+    assert LOGIC.sort_key(RANKED_PROFILE, better)[place] < LOGIC.sort_key(RANKED_PROFILE, worse)[place]
+
+
+# The case that used to rank wrongly: 4 of 10 key skills (Fair, more skills matched) above 3 of 4 (Strong)
+def test_a_strong_match_always_ranks_above_a_fair_one():
+    fair = make_job(title="fair", required_skills=["Python", "SQL", "Excel", "Tableau", "R", "Java", "Git", "AWS",
+                                                   "Spark", "Airflow"],
+                    matched_skills=matched("Python", "SQL", "Excel", "Tableau"))
+    strong = make_job(title="strong", required_skills=["Python", "SQL", "Excel", "Power BI"],
+                      matched_skills=matched("Python", "SQL", "Excel"))
+    stretch = make_job(title="stretch", min_years_experience=5, required_skills=["Python"], matched_skills=matched("Python"))
+    ranked = LOGIC.filter_and_rank(RANKED_PROFILE, [fair, stretch, strong], NO_FILTERS, top_n=3)
+    assert [(job["title"], job["match_outcome"]) for job in ranked] == [
+        ("strong", "Strong match"), ("fair", "Fair match"), ("stretch", "Stretch")]
 
 
 def test_a_job_with_no_key_skills_has_a_share_of_zero():
@@ -346,9 +372,11 @@ def test_a_job_with_no_key_skills_has_a_share_of_zero():
 
 
 def test_the_default_order_is_the_phase_1_order():
-    assert LOGIC.rules == (LogicManager.rank_by_experience_gap, LogicManager.rank_by_education,
-                           LogicManager.rank_by_far_above_level, LogicManager.rank_by_skill_count,
-                           LogicManager.rank_by_skill_share, LogicManager.rank_by_level_gap)
+    # seven keys, and an earlier one beats every later one: a job short on experience ranks below a job with fewer skills
+    assert len(LOGIC.sort_key(RANKED_PROFILE, make_job())) == 7
+    short = make_job(title="short", min_years_experience=5, matched_skills=matched("Python", "SQL", "Excel"))
+    fits = make_job(title="fits", matched_skills=matched("Python"))
+    assert LOGIC.sort_key(RANKED_PROFILE, fits) < LOGIC.sort_key(RANKED_PROFILE, short)
 
 
 # ---------- the combined multi-condition rule: experience, education, level and skills together ----------
@@ -374,13 +402,17 @@ def test_multi_condition_order_uses_experience_then_education_then_level_then_sk
 # ---------- open/closed: a new rule changes the ranking without changing LogicManager ----------
 
 def fewest_skills_first(fit: dict) -> float:
-    """A made-up rule for the test: the opposite of rank_by_skill_count."""
+    """A made-up key for the test: the opposite of the standard "most matched skills first"."""
     return fit["matched"]
+
+
+def most_skills_first(fit: dict) -> float:
+    return -fit["matched"]
 
 
 def test_a_new_rule_can_be_plugged_in_without_touching_the_manager():
     jobs = [make_job(title="two", matched_skills=matched("Python", "SQL")), make_job(title="one", matched_skills=matched("Python"))]
-    custom = LogicManager(rules=[fewest_skills_first])
+    custom = LogicManager(ranking_keys=[fewest_skills_first])
     assert [job["title"] for job in custom.filter_and_rank(PROFILE, jobs, NO_FILTERS)] == ["one", "two"]
     assert [job["title"] for job in LOGIC.filter_and_rank(PROFILE, jobs, NO_FILTERS)] == ["two", "one"]
 
@@ -388,7 +420,7 @@ def test_a_new_rule_can_be_plugged_in_without_touching_the_manager():
 def test_rule_order_is_the_priority_order():
     jobs = [make_job(title="more skills, needs experience", min_years_experience=3, matched_skills=matched("Python", "SQL")),
             make_job(title="fewer skills, fits", matched_skills=matched("Python"))]
-    skills_first = LogicManager(rules=[LogicManager.rank_by_skill_count])
+    skills_first = LogicManager(ranking_keys=[most_skills_first])
     assert skills_first.filter_and_rank(PROFILE, jobs, NO_FILTERS)[0]["title"] == "more skills, needs experience"
     assert LOGIC.filter_and_rank(PROFILE, jobs, NO_FILTERS)[0]["title"] == "fewer skills, fits"
 
@@ -412,6 +444,65 @@ def test_add_requirements_keeps_only_matches_the_candidate_really_has():
     assert record[0]["missing_skills"] == ["C++"]
 
 
+# A posting asking for SQL and Python once showed SQL alone. When the AI names fewer than MIN_KEY_SKILLS, the
+# employer's own skill tags fill the list (behaviours and praise-dressed behaviours left out), and a tag the
+# candidate lists is a match
+def test_too_few_key_skills_are_topped_up_from_the_postings_own_tags():
+    profile = {"core_skills": ["SQL", "Python"]}
+    listing = {"title": "Analyst", "description": "SQL and Python", "job_url": GOOD_URL,
+               "listed_skills": ["SQL", "Team Player", "Strong Attention To Detail", "Internships", "python",
+                                 "Excel", "Tableau"]}
+    answer = {"required_skills": ["SQL"], "skill_matches": [{"job_skill": "SQL", "candidate_skill": "SQL"}]}
+    record = LOGIC.add_requirements([listing], [answer], profile)[0]
+    assert record["required_skills"] == ["SQL", "python", "Excel", "Tableau"]  # up to MIN_KEY_SKILLS (4)
+    assert record["matched_skills"] == [{"job_skill": "SQL", "candidate_skill": "SQL"},
+                                        {"job_skill": "python", "candidate_skill": "Python"}]
+    assert record["missing_skills"] == ["Excel", "Tableau"]
+
+
+# One skill under two names: a job listing "UAT" and "User Acceptance Testing" keeps it once, and a resume's
+# "UAT" covers the job's full name even when the AI didn't pair them
+def test_an_abbreviation_and_its_full_name_are_one_skill_when_matching():
+    profile = {"core_skills": ["UAT", "SQL"]}
+    listing = {"title": "Analyst", "description": "x", "job_url": GOOD_URL}
+    answer = {"required_skills": ["User Acceptance Testing", "SQL", "UAT Testing", "Jira", "Python"],
+              "skill_matches": [{"job_skill": "SQL", "candidate_skill": "SQL"}]}
+    record = LOGIC.add_requirements([listing], [answer], profile)[0]
+    assert record["required_skills"] == ["User Acceptance Testing", "SQL", "Jira", "Python"]
+    assert record["matched_skills"] == [{"job_skill": "User Acceptance Testing", "candidate_skill": "UAT"},
+                                        {"job_skill": "SQL", "candidate_skill": "SQL"}]
+    assert record["missing_skills"] == ["Jira", "Python"]
+
+
+def test_skill_gaps_count_an_abbreviation_and_its_full_name_as_one():
+    gaps = LOGIC.find_skill_gaps([{"missing_skills": ["UAT"]}, {"missing_skills": ["User Acceptance Testing"]}])
+    assert gaps == [("UAT", 2)]
+
+
+def test_enough_key_skills_from_the_ai_are_not_topped_up():
+    listing = {"title": "Analyst", "description": "x", "job_url": GOOD_URL, "listed_skills": ["Jira", "Git"]}
+    answer = {"required_skills": ["SQL", "Python", "Excel", "KYC"], "skill_matches": []}
+    record = LOGIC.add_requirements([listing], [answer], {"core_skills": []})[0]
+    assert record["required_skills"] == ["SQL", "Python", "Excel", "KYC"]
+
+
+# Each job shows at most MAX_KEY_SKILLS (5) key skills: the AI lists the most important first, so the rest are cut
+def test_a_job_keeps_its_five_most_important_key_skills():
+    listing = {"title": "Analyst", "description": "x", "job_url": GOOD_URL}
+    answer = {"required_skills": ["SQL", "Python", "Team Player", "Excel", "KYC", "Power BI", "Tableau", "Git"],
+              "skill_matches": [{"job_skill": "Tableau", "candidate_skill": "Tableau"}]}
+    record = LOGIC.add_requirements([listing], [answer], {"core_skills": ["Tableau"]})[0]
+    assert record["required_skills"] == ["SQL", "Python", "Excel", "KYC", "Power BI"]  # Team Player is not a skill
+    assert record["matched_skills"] == []  # Tableau was cut, so its match goes with it
+
+
+def is_learnable(name: str) -> bool:
+    """Whether a tag survives add_requirements as one of a job's required skills."""
+    listing = {"title": "Analyst", "description": "long text", "job_url": GOOD_URL, "min_years_experience": 0}
+    answer = {"required_skills": [name], "min_education": "Not specified", "skill_matches": []}
+    return LOGIC.add_requirements([listing], [answer], {"core_skills": ["Python"]})[0]["required_skills"] == [name]
+
+
 @pytest.mark.parametrize("name", [
     "SQL", "Power BI", "ETL", "Financial Modelling", "Node.js", "KYC",
     "Data Visualisation", "Agile", "Machine Learning",
@@ -420,7 +511,7 @@ def test_add_requirements_keeps_only_matches_the_candidate_really_has():
     "HPLC", "PCR", "Mass Spectrometry", "Cell Culture", "GMP", "ISO 13485", "AutoCAD", "Solidworks",
 ])
 def test_a_named_tool_or_technique_is_a_learnable_skill(name):
-    assert LogicManager.is_learnable_skill(name)
+    assert is_learnable(name)
 
 
 @pytest.mark.parametrize("name", [
@@ -431,7 +522,7 @@ def test_a_named_tool_or_technique_is_a_learnable_skill(name):
 def test_an_activity_with_nothing_to_learn_is_not_a_learnable_skill(name):
     """These read like skills, unlike "Team Player", but name no tool, standard or technique, so there is
     no course to take and nothing to put in a roadmap."""
-    assert not LogicManager.is_learnable_skill(name)
+    assert not is_learnable(name)
 
 
 @pytest.mark.parametrize("name", [
@@ -442,7 +533,7 @@ def test_an_activity_with_nothing_to_learn_is_not_a_learnable_skill(name):
     "", "   ",
 ])
 def test_a_way_of_behaving_at_work_is_not_a_learnable_skill(name):
-    assert not LogicManager.is_learnable_skill(name)
+    assert not is_learnable(name)
 
 
 def test_tags_that_are_not_skills_are_dropped_before_the_skill_share_is_counted():
@@ -499,8 +590,166 @@ def test_the_guard_blocks_common_tools_the_job_does_not_list():
 
 
 def test_the_guard_keeps_skills_and_everyday_words_the_resume_has():
-    paragraphs = [{"id": 0, "kind": "bullet", "text": "Built Power BI reports", "editable": True}]
+    paragraphs = [{"id": 0, "kind": "bullet", "text": "Built Power BI reports", "editable": True, "chars_per_line": 100}]
     edits = [{"paragraph": 0, "text": "Built PowerBI reports to go to market faster", "reason": "clearer"}]
     kept, _, removed, _ = LogicManager().ground_docx_edits(edits, paragraphs, "Built Power BI reports", ["Tableau"])
     assert kept == {0: "Built PowerBI reports to go to market faster"} and removed == []
     assert not LogicManager().job_keywords({"required_skills": ["Java"]}, "JavaScript developer")[0]
+
+
+# A rewrite can't upgrade a qualification: aimed at a job asking for a degree, the AI turned a diploma
+# graduate's profile into "Degree holder", which no number or skill check catches
+DIPLOMA_RESUME = "PROFILE\nDiploma in Financial Technology graduate. Comfortable with SQL and Excel.\nGCE O-Level"
+
+
+@pytest.mark.parametrize("rewrite", [
+    "Degree holder in Financial Technology. Proficient in SQL and Excel.",
+    "Bachelor's graduate in Financial Technology with SQL and Excel.",
+    "Diploma graduate working towards an MBA, using SQL and Excel.",
+])
+def test_the_guard_keeps_a_profile_that_claims_a_qualification_the_resume_lacks(rewrite):
+    paragraphs = [{"id": 1, "kind": "text", "text": DIPLOMA_RESUME.splitlines()[1], "editable": True, "chars_per_line": 100}]
+    kept, _, removed, notes = LogicManager().ground_docx_edits(
+        [{"paragraph": 1, "text": rewrite, "reason": "aims at the job"}], paragraphs, DIPLOMA_RESUME, [])
+    assert kept == {} and removed == [] and notes[0]["kind"] == "edit_adds_qualification"
+
+
+def test_the_guard_keeps_a_rewrite_that_names_only_the_resumes_own_qualifications():
+    paragraphs = [{"id": 1, "kind": "text", "text": DIPLOMA_RESUME.splitlines()[1], "editable": True, "chars_per_line": 100}]
+    rewrite = "Financial Technology diploma graduate using SQL and Excel."
+    kept, _, _, notes = LogicManager().ground_docx_edits(
+        [{"paragraph": 1, "text": rewrite, "reason": "leads with SQL"}], paragraphs, DIPLOMA_RESUME, [])
+    assert kept == {1: rewrite} and notes == []
+
+
+def test_a_tailored_pdf_resume_drops_only_the_sentence_that_claims_a_qualification():
+    tailored = {"name": "", "contact": "", "sections": [
+        {"heading": "Profile", "kind": "text", "text": "Degree holder skilled in SQL. Comfortable with SQL and Excel.",
+         "skill_groups": [], "entries": []},
+        {"heading": "Education", "kind": "entries", "text": "", "skill_groups": [], "entries": [
+            {"title": "Diploma in Financial Technology", "organisation": "", "subtitle": "", "dates": "",
+             "bullets": ["Studied SQL", "Took Master-level modules"]}]}]}
+    resume, _, notes = LogicManager().ground_tailored_resume(tailored, DIPLOMA_RESUME, [])
+    profile, education = resume["sections"]
+    assert "Degree" not in profile["text"] and "Comfortable with SQL and Excel." in profile["text"]
+    assert education["entries"][0]["bullets"] == ["Studied SQL"]  # nothing close in the resume, so the point goes
+    assert all(note["kind"] == "sentences_checked" and note["qualifications"] for note in notes)
+
+
+# Found in a run with a sample teacher's PDF resume: a summary that added "Tuition" lost the whole section, a point
+# lost its original wording, and the resume's own languages ("English: Native") were dropped as if made up
+TEACHER_RESUME = """Terrance Ryan
+PROFESSIONAL SUMMARY
+Skilled high school math teacher with innovative and engaging teaching style
+demonstrated over seven years of academic experience. Caring and hardworking
+professional with exceptional work ethic.
+WORK HISTORY
+September 2011 - Current | High School Math Teacher
+• Provide meaningful math instruction to improve the math skills of children.
+• Assess submitted class assignments, determining grades and review work with
+struggling learners.
+LANGUAGES
+English: Native | Spanish: Upper Intermediate (B2) | Italian: Elementary (A2)"""
+
+
+def teacher_draft() -> dict:
+    return {"name": "Terrance Ryan", "contact": "", "sections": [
+        {"heading": "PROFESSIONAL SUMMARY", "kind": "text", "skill_groups": [], "entries": [],
+         "text": "Skilled high school math teacher with an engaging teaching style and seven years of academic "
+                 "experience. Experienced in tuition and student engagement for exam preparation."},
+        {"heading": "WORK HISTORY", "kind": "entries", "text": "", "skill_groups": [], "entries": [
+            {"title": "High School Math Teacher", "organisation": "", "subtitle": "", "dates": "September 2011 - Current",
+             "bullets": ["Provided meaningful math tuition to improve the math skills of children.",
+                         "Assess submitted class assignments, determining grades and review work with struggling learners."]}]},
+        {"heading": "LANGUAGES", "kind": "skills", "text": "", "entries": [], "skill_groups": [
+            {"label": "", "skills": ["English: Native", "Spanish: Upper Intermediate (B2)", "Italian: Elementary (A2)"]}]}]}
+
+
+def test_a_pdf_summary_keeps_its_good_sentences_and_a_point_goes_back_to_its_own_wording():
+    resume, removed, notes = LogicManager().ground_tailored_resume(teacher_draft(), TEACHER_RESUME, ["Tuition"])
+    summary, work, languages = resume["sections"]
+    assert summary["text"].startswith("Skilled high school math teacher") and "tuition" not in summary["text"].lower()
+    assert work["entries"][0]["bullets"] == [
+        "Provide meaningful math instruction to improve the math skills of children.",  # the resume's own point
+        "Assess submitted class assignments, determining grades and review work with struggling learners."]
+    assert removed == ["Tuition"] and {note["where"] for note in notes} == {"PROFESSIONAL SUMMARY", "High School Math Teacher"}
+
+
+# Rewordings seen in run-throughs that use only facts from the resume but recombine them: a tool the resume names
+# for other work moved into a point, or the work and skill made to sound stronger. Each keeps its original
+FINTECH_RESUME = ("Diploma in Financial Technology graduate with a 6-month data analytics internship. Comfortable "
+                  "with Python, SQL and Excel for financial data analysis and reporting.\n"
+                  "Wrote SQL queries to extract and reconcile daily payment transactions across 3 settlement systems\n"
+                  "Automated a weekly merchant performance report in Python (pandas) and Excel\n"
+                  "Built Power BI dashboards tracking transaction volume, failure rates and chargebacks for the "
+                  "operations team\nTechnical: Python, pandas, SQL, Microsoft Excel, Power BI, Tableau, Git")
+FINTECH_LINES = FINTECH_RESUME.splitlines()
+
+
+def docx_check(paragraph: int, kind: str, rewrite: str) -> tuple[dict, list[dict]]:
+    paragraphs = [{"id": index, "kind": kind, "text": text, "editable": True, "chars_per_line": 200}
+                  for index, text in enumerate(FINTECH_LINES)]
+    kept, _, _, notes = LogicManager().ground_docx_edits(
+        [{"paragraph": paragraph, "text": rewrite, "reason": "aims at the job"}], paragraphs, FINTECH_RESUME, [],
+        ["SQL", "Tableau", "Power BI", "Microsoft Excel", "Python"])
+    return kept, notes
+
+
+@pytest.mark.parametrize("paragraph, kind, rewrite, tools, words", [
+    (3, "bullet", "Built Tableau and Power BI dashboards tracking transaction volume, failure rates and chargebacks "
+                  "for internal stakeholders", ["Tableau"], []),
+    (1, "bullet", "Performed complex SQL scripting to reconcile daily payment transactions across 3 settlement systems",
+     [], ["complex"]),
+    (0, "text", "Diploma in Financial Technology graduate with a 6-month data analytics internship. Proficient in "
+                "Python, SQL and Excel, with strong reporting skills.", [], ["proficient", "strong"]),
+])
+def test_a_rewording_that_recombines_real_facts_keeps_its_original(paragraph, kind, rewrite, tools, words):
+    kept, notes = docx_check(paragraph, kind, rewrite)
+    assert kept == {} and notes == [{"kind": "edit_recombines", "start": FINTECH_LINES[paragraph][:50],
+                                     "tools": tools, "words": words}]
+
+
+@pytest.mark.parametrize("paragraph, kind, rewrite", [
+    (2, "bullet", "Automated a weekly merchant performance report in Python (pandas) and Microsoft Excel"),  # same tool
+    (3, "bullet", "Built Power BI dashboards tracking transaction volume, failure rates and chargebacks for "
+                  "internal stakeholders"),
+    (1, "bullet", "Reconciled daily payment transactions across 3 settlement systems by writing SQL queries"),
+    (0, "text", "Diploma in Financial Technology graduate comfortable with Python, SQL, Tableau and Excel for "
+                "financial data analysis."),  # a summary may gather the resume's skills
+])
+def test_a_plain_rewording_of_the_same_facts_is_kept(paragraph, kind, rewrite):
+    kept, notes = docx_check(paragraph, kind, rewrite)
+    assert kept == {paragraph: rewrite} and notes == []
+
+
+# Seen in a real run: the qualification word was right ("Diploma"), but its field was renamed
+def test_a_renamed_qualification_keeps_its_original():
+    kept, notes = docx_check(0, "text", "Diploma in Data Analytics and Financial Technology graduate with a 6-month "
+                                        "data analytics internship. Comfortable with Python, SQL and Excel.")
+    assert kept == {} and notes == [{"kind": "edit_adds_qualification", "start": FINTECH_LINES[0][:50],
+                                     "qualifications": ["Diploma in Data Analytics and Financial Technology"]}]
+    same = "Diploma in Financial Technology graduate with a 6-month data analytics internship, comfortable with SQL."
+    assert docx_check(0, "text", same) == ({0: same}, [])
+    joined = "Diploma in Financial Technology and a 6-month data analytics internship, comfortable with SQL."
+    assert docx_check(0, "text", joined) == ({0: joined}, [])  # "and" after the name is not part of it
+
+
+def test_a_pdf_sentence_that_recombines_real_facts_goes_back_to_the_resumes_own():
+    draft = teacher_draft()
+    draft["sections"][0]["text"] = ("Skilled high school math teacher with innovative and engaging teaching style "
+                                    "demonstrated over seven years of academic experience and mastery of mathematics.")
+    draft["sections"][1]["entries"][0]["bullets"][0] = ("Provide meaningful math instruction to improve the math "
+                                                        "skills of children using effective classroom management.")
+    resume, _, notes = LogicManager().ground_tailored_resume(draft, TEACHER_RESUME, [], ["Classroom management"])
+    summary, work, _ = resume["sections"]
+    assert "mastery" not in summary["text"] and summary["text"].startswith("Skilled high school math teacher")
+    assert work["entries"][0]["bullets"][0] == "Provide meaningful math instruction to improve the math skills of children."
+    assert [(note["where"], note["tools"], note["words"]) for note in notes] == [
+        ("PROFESSIONAL SUMMARY", [], ["mastery"]), ("High School Math Teacher", ["Classroom management"], [])]
+
+
+def test_the_resumes_own_items_with_colons_and_brackets_are_kept():
+    resume, removed, _ = LogicManager().ground_tailored_resume(teacher_draft(), TEACHER_RESUME, [])
+    assert resume["sections"][2]["skill_groups"][0]["skills"] == [
+        "English: Native", "Spanish: Upper Intermediate (B2)", "Italian: Elementary (A2)"]
+    assert removed == []

@@ -7,8 +7,8 @@
 <div class="page-head page-head-row">
   <div>
     <h1>Your matches</h1>
-    {# The job titles searched on MyCareersFuture, e.g. "Searched MyCareersFuture for: Data Analyst, Business Analyst" #}
-    <p class="lead">Searched MyCareersFuture for: {{ profile.search_keywords | join(", ") }}</p>
+    {# The job titles searched on MyCareersFuture, e.g. "Job titles searched: Data Analyst, Business Analyst" #}
+    <p class="lead">Job titles searched: {{ profile.search_keywords | join(", ") }}</p>
   </div>
   <div class="page-actions">
     {# The what-if simulator and skill roadmap for this search's jobs (web_app.whatif) #}
@@ -62,67 +62,108 @@
 {% if skill_gaps %}
 {# The skills missing from 2 or more of the top jobs (logic_manager.find_skill_gaps) #}
 <section class="card gap-card">
-  <h2>Skills worth building</h2>
-  <p class="muted small">These come up most often in the jobs below that you don't have yet.</p>
+  <h2>Skills to learn next</h2>
+  <p class="muted small">These come up most in the jobs below.</p>
   <ul class="gap-list">
     {% for skill, count in skill_gaps %}
-    <li><span class="tag">{{ skill }}</span> <span class="muted small">missing in {{ count }} of {{ jobs | length }} matches</span></li>
+    <li><span class="tag">{{ skill }}</span> <span class="muted small">Asked for by {{ count }} of your {{ jobs | length }} matches</span></li>
     {% endfor %}
   </ul>
 </section>
 {% endif %}
 
-<h2 class="section-title">Top matches</h2>
+{# The filters this search used, in words, shown beside the heading even while the panel is closed #}
+{% set active = [] %}
+{% if filters.min_salary %}{% set _ = active.append("From $" ~ "{:,}".format(filters.min_salary) ~ " a month") %}{% endif %}
+{% if filters.job_type != job_types[0] %}{% set _ = active.append(filters.job_type) %}{% endif %}
+{% if filters.work_arrangement != work_arrangements[0] %}{% set _ = active.append(filters.work_arrangement) %}{% endif %}
+{% if filters.max_years_experience != max_years %}{% set _ = active.append("Up to " ~ filters.max_years_experience ~ " years' experience") %}{% endif %}
 
-{# Updating runs a new MyCareersFuture search with these filters, reusing this search's profile (web_app.update_search) #}
-<form class="card refine" method="post" action="{{ url_for('update_search', search_id=search_id) }}">
-  <div class="refine-head">
-    <h3>Adjust filters</h3>
-    <p class="muted small">Searches MyCareersFuture again with these filters, using the profile already read from your resume.</p>
-  </div>
-  <div class="refine-grid">
-    <div class="field">
-      <label for="min_salary">Min salary</label>
-      <input id="min_salary" name="min_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="0" inputmode="numeric"
-             value="{{ filters.min_salary or '' }}">
+{# The search-again panel folds behind a Filters button, so the jobs sit right under the heading. It opens by
+   itself when the filters sent had a problem. Updating runs a new MyCareersFuture search with these filters,
+   reusing this search's profile (web_app.update_search). The fields match the search page's. #}
+<details class="filters-fold"{% if filter_problem %} open{% endif %}>
+  <summary class="matches-head">
+    <h2 class="section-title">Top matches</h2>
+    <span class="muted small active-filters">{{ active | join(" · ") if active else "No filters" }}</span>
+    <span class="btn btn-secondary filters-btn" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4 2v-8Z"/></svg>
+      <span class="when-closed">Filters</span><span class="when-open">Hide filters</span>
+    </span>
+  </summary>
+  <form class="card refine" method="post" action="{{ url_for('update_search', search_id=search_id) }}">
+    <p class="muted small refine-note">Search again with new filters. Your resume isn't read again.</p>
+    <div class="grid">
+      <div class="field">
+        <label for="min_salary">Minimum monthly salary (SGD)</label>
+        <input id="min_salary" name="min_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="0" inputmode="numeric"
+               value="{{ filters.min_salary or '' }}">
+      </div>
+      <div class="field">
+        <label for="job_type">Job type</label>
+        <select id="job_type" name="job_type">
+          {% for option in job_types %}<option {% if option == filters.job_type %}selected{% endif %}>{{ option }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="work_arrangement">Work arrangement</label>
+        <select id="work_arrangement" name="work_arrangement">
+          {% for option in work_arrangements %}<option {% if option == filters.work_arrangement %}selected{% endif %}>{{ option }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field field-wide">
+        <label for="max_years_experience">Jobs that ask for up to</label>
+        <div class="input-suffix">
+          <input id="max_years_experience" name="max_years_experience" type="number" min="0" max="{{ max_years }}" placeholder="Any" inputmode="numeric"
+                 value="{{ filters.max_years_experience if filters.max_years_experience != max_years else '' }}" aria-describedby="experience-hint">
+          <span>years of experience</span>
+        </div>
+        <p id="experience-hint" class="muted small field-hint">Leave blank for any. You can type more than you have, e.g. 3 if you have 2, to also see jobs that ask for a bit more.</p>
+      </div>
+      <div class="field">
+        <label for="show">Show</label>
+        <select id="show" name="show">
+          {% for option in show_options %}<option value="{{ option }}" {% if option == show %}selected{% endif %}>Top {{ option }}</option>{% endfor %}
+        </select>
+      </div>
     </div>
-    <div class="field">
-      <label for="max_salary">Max salary</label>
-      <input id="max_salary" name="max_salary" type="number" min="0" max="{{ max_salary }}" step="100" placeholder="Any" inputmode="numeric"
-             value="{{ filters.max_salary if filters.max_salary != max_salary else '' }}">
+    <div class="refine-actions">
+      <button class="btn btn-primary" type="submit">Update matches</button>
     </div>
-    <div class="field">
-      <label for="job_type">Job type</label>
-      <select id="job_type" name="job_type">
-        {% for option in job_types %}<option {% if option == filters.job_type %}selected{% endif %}>{{ option }}</option>{% endfor %}
-      </select>
-    </div>
-    <div class="field">
-      <label for="work_arrangement">Arrangement</label>
-      <select id="work_arrangement" name="work_arrangement">
-        {% for option in work_arrangements %}<option {% if option == filters.work_arrangement %}selected{% endif %}>{{ option }}</option>{% endfor %}
-      </select>
-    </div>
-    <div class="field">
-      <label for="max_years_experience">Max years required</label>
-      <input id="max_years_experience" name="max_years_experience" type="number" min="0" max="{{ max_years }}" placeholder="Any" inputmode="numeric"
-             value="{{ filters.max_years_experience if filters.max_years_experience != max_years else '' }}">
-    </div>
-    <div class="field">
-      <label for="show">Show</label>
-      <select id="show" name="show">
-        {% for option in show_options %}<option value="{{ option }}" {% if option == show %}selected{% endif %}>Top {{ option }}</option>{% endfor %}
-      </select>
-    </div>
-  </div>
-  <div class="refine-actions">
-    <button class="btn btn-primary" type="submit">Update matches</button>
-  </div>
-</form>
+  </form>
+</details>
 
 {% if jobs %}
-  {% if newly_saved %}<p class="muted small saved-note">{{ newly_saved }} new job{{ 's' if newly_saved != 1 }} added to <a href="{{ url_for('saved') }}">Saved jobs</a>.</p>{% endif %}
-  {{ job_list(jobs) }}
+  {% if newly_saved %}<p class="muted small saved-note">We saved {{ newly_saved }} new match{{ 'es' if newly_saved != 1 }} to <a href="{{ url_for('saved') }}">Saved jobs</a>.</p>{% endif %}
+  {# Sorting happens in the browser (results.js), as on the Saved jobs page. "Recommended" is the match ranking;
+     the other orders hide the rank numbers, which would no longer read top to bottom. Close matches stay
+     below the exact ones. Without JavaScript the select is hidden and the ranking shows. #}
+  {% if jobs | length > 1 %}
+  <div class="toolbar results-toolbar" id="sort-bar" hidden>
+    <div class="field">
+      <label for="job-sort">Sort by</label>
+      <select id="job-sort">
+        <option value="recommended">Recommended</option>
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="salary">Highest salary</option>
+        <option value="match">Best skill match</option>
+      </select>
+    </div>
+  </div>
+  {% endif %}
+  {# Too few jobs met every filter, so the search filled the list with the next best (SearchService.rank_and_save):
+     they come after the exact matches, each saying which filter it misses #}
+  {% set exact = jobs | rejectattr("close_match") | list %}
+  {% set close = jobs | selectattr("close_match") | list %}
+  {{ job_list(exact, search_id=search_id) }}
+  {% if close %}
+  <div class="close-head">
+    <h3>Close matches</h3>
+    <p class="muted small">{% if exact %}Only {{ exact | length }} job{{ " fits" if exact | length == 1 else "s fit" }} all your filters{% else %}No job fits all your filters{% endif %}, so here are the closest ones.</p>
+  </div>
+  {{ job_list(close, search_id=search_id, start=exact | length + 1) }}
+  {% endif %}
 {% else %}
   <div class="empty card">
     <h3>No jobs matched</h3>
@@ -137,16 +178,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-  // Same check as the search form (app.js): the browser stops "Update matches" if max salary is below min
-  const minSalary = document.getElementById("min_salary");
-  const maxSalary = document.getElementById("max_salary");
-  function checkSalaryRange() {
-    const low = Number(minSalary.value || 0);
-    const high = maxSalary.value === "" ? Infinity : Number(maxSalary.value);
-    maxSalary.setCustomValidity(high < low ? "Maximum salary cannot be lower than minimum salary." : "");
-  }
-  minSalary.addEventListener("input", checkSalaryRange);
-  maxSalary.addEventListener("input", checkSalaryRange);
-</script>
+{% if jobs | length > 1 %}<script src="{{ url_for('static', filename='results.js') }}"></script>{% endif %}
 {% endblock %}
+

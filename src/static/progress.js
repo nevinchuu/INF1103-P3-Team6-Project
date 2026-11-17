@@ -127,7 +127,7 @@ function setupTaskForm({ resultUrl, onStarted = () => {} }) {
       onStarted();
       showProgress(data.search_id);
     } catch {
-      showForm("Could not reach the server. Is web_app.py still running?");
+      showForm("Can't reach the app. Check it's still running, then try again.");
     }
   });
 
