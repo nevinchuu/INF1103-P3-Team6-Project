@@ -1,6 +1,6 @@
 """EducationRule: a job that asks for a higher qualification than the candidate's."""
 
-from logic.match_rule import MatchRule
+from logic_layer.match_rule import MatchRule
 
 
 class EducationRule(MatchRule):

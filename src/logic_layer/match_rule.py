@@ -2,6 +2,11 @@
 
 from abc import ABC, abstractmethod
 
+# The outcome a job gets from LogicManager.match_outcome (here so the simulator can use them without the manager)
+OUTCOME_STRONG = "Strong match"
+OUTCOME_FAIR = "Fair match"
+OUTCOME_STRETCH = "Stretch"
+
 
 class MatchRule(ABC):
     """Interface: one requirement a job has that the candidate can fall short of. LogicManager.match_outcome asks
