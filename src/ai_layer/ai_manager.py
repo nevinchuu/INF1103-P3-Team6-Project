@@ -2,7 +2,7 @@
 
 Every AI call goes through AIManager.run_task(task_name, record): build the prompt -> provider.complete ->
 parse -> validate against the task's schema in TASKS. The manager knows nothing about which AI service answers
-(BaseAIProvider and its subclasses), so adding a provider changes neither it nor the other managers. Adding a kind
+(any AIProvider), so adding a provider changes neither it nor the other managers. Adding a kind
 of call means one schema, one prompt method and one entry in TASKS. Called by the apps and SearchService.
 """
 
@@ -18,10 +18,9 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from ai.anthropic_provider import AnthropicProvider
-from ai.base_ai_provider import BaseAIProvider, PROVIDER_CONFIGS
-from ai.caching_ai_provider import CachingAIProvider
-from ai.openai_compatible_provider import OpenAICompatibleProvider
+from ai_layer.ai_provider import AIProvider
+from ai_layer.caching_ai_provider import CachingAIProvider
+from ai_layer.gemini_provider import GeminiProvider
 
 
 # Ordered lowest to highest so logic_manager can compare levels by index
@@ -67,7 +66,7 @@ CANDIDATE_SCHEMA = {
         "certifications": STRING_LIST,
         "search_keywords": {
             **STRING_LIST,  # ** copies the keys of STRING_LIST into this dict, then adds "description"
-            "description": "3-4 job titles to search for, without seniority words, e.g. 'Software Engineer'",
+            "description": "4-5 short, common job titles to search for (1-3 words), e.g. 'Data Analyst'",
         },
     },
     "required": [
@@ -249,6 +248,12 @@ NUMERIC_RANGES = {"years_of_experience": (0, 60), "internship_months": (0, 240),
 
 NON_EMPTY_LISTS = {"search_keywords"}  # we can't search for jobs without at least one keyword
 
+# One rule for how a skill is written, in the resume's skills and in each job's key skills, so the same skill has
+# the same name on both sides (LogicManager also treats an abbreviation as its full name: SkillName)
+SKILL_NAMING_RULE = ('Write each skill once, by its full common name: "User Acceptance Testing", not "UAT" or '
+                     '"UAT Testing"; "Microsoft Excel", not "MS Excel". Keep an abbreviation only where it is the '
+                     'name everyone uses (SQL, KYC, AWS).')
+
 
 
 JOB_BATCH_SIZE = 10            # jobs sent to the AI per call
@@ -256,25 +261,24 @@ MALFORMED_RESPONSE_RETRIES = 1  # extra tries when a reply isn't valid JSON or f
 MAX_RESUME_CHARS = 20000       # longer resume text is cut, so a huge file can't overflow the AI's input limit
 DEFAULT_PROVIDER = "gemini"
 # Saved AI replies (CachingAIProvider), next to the saved jobs in <project root>/data/
-AI_CACHE_PATH = str(Path(__file__).resolve().parents[2] / "data" / "ai_cache.json")
+AI_CACHE_PATH = str(Path(__file__).resolve().parents[2] / "data" / "ai_cache.json")  # <project root>/data/
 
 
 class AIManager:
     """Runs the AI tasks: builds each prompt, calls the provider, parses and validates the reply."""
 
     # Which class handles each provider (a lookup, so adding a provider does not need an if/else chain)
-    _PROVIDER_CLASSES = {"qwen": OpenAICompatibleProvider, "gemini": OpenAICompatibleProvider,
-                         "openai": OpenAICompatibleProvider, "anthropic": AnthropicProvider}
+    __PROVIDER_CLASSES = {"gemini": GeminiProvider}
 
-    def __init__(self, provider: BaseAIProvider) -> None:
+    def __init__(self, provider: AIProvider) -> None:
         # Aggregation: the provider is handed in and lives on its own (it can be swapped, shared or faked);
         # the manager only uses it
-        self._provider = provider
+        self.__provider = provider
         # How each kind of AI call writes its prompt (its schema is in TASKS)
-        self.__prompts = {"candidate_profile": self._candidate_prompt,
-                          "job_requirements": self._requirements_prompt,
-                          "tailored_resume": self._tailored_resume_prompt,
-                          "docx_edits": self._docx_edits_prompt}
+        self.__prompts = {"candidate_profile": self.__candidate_prompt,
+                          "job_requirements": self.__requirements_prompt,
+                          "tailored_resume": self.__tailored_resume_prompt,
+                          "docx_edits": self.__docx_edits_prompt}
 
     @classmethod
     def from_environment(cls) -> "AIManager":
@@ -290,18 +294,23 @@ class AIManager:
         return cls(provider)
 
     @classmethod
-    def create_provider(cls, provider: str, model: str | None = None) -> BaseAIProvider:
+    def create_provider(cls, name: str, model: str | None = None) -> AIProvider:
         """A provider by name; an unknown name falls back to the default one, with a warning."""
-        provider = provider.strip().lower()
-        if provider not in PROVIDER_CONFIGS:
-            logging.warning(f"Unknown AI provider '{provider}', using {DEFAULT_PROVIDER}.")
-            provider = DEFAULT_PROVIDER
-        return cls._PROVIDER_CLASSES[provider](PROVIDER_CONFIGS[provider], model)
+        name = name.strip().lower()
+        if name not in cls.__PROVIDER_CLASSES:
+            logging.warning(f"Unknown AI provider '{name}', using {DEFAULT_PROVIDER}.")
+            name = DEFAULT_PROVIDER
+        return cls.__PROVIDER_CLASSES[name](model)
 
     @property
     def provider_name(self) -> str:
         """The AI service in use, as people know it, e.g. "Google Gemini" (for the privacy notice)."""
-        return self._provider.label
+        return self.__provider.provider_name
+
+    @property
+    def setup_problem(self) -> str:
+        """Why the AI can't work until the setup is fixed (e.g. "GEMINI_API_KEY is not set"), or ""."""
+        return self.__provider.setup_problem
 
     # ---------- the pipeline every AI call follows ----------
 
@@ -314,15 +323,15 @@ class AIManager:
         prompt = self.__prompts[task_name](record)
         schema = TASKS[task_name]
         for attempt in range(1, MALFORMED_RESPONSE_RETRIES + 2):
-            raw = self._provider.complete(prompt, task_name, schema)
+            raw = self.__provider.complete(prompt, task_name, schema)
             if raw is None:
                 return None
             # Each step returns None on failure
-            data = self._parse(raw)
-            result = self._validate(data, task_name, schema) if data is not None else None
+            data = self.__parse(raw)
+            result = self.__validate_schema(data, task_name, schema) if data is not None else None
             if result is not None:
                 return result
-            self._provider.discard_reply(prompt, task_name, schema)  # never replay an unusable reply
+            self.__provider.discard_reply(prompt, task_name, schema)  # never replay an unusable reply
             if attempt <= MALFORMED_RESPONSE_RETRIES:
                 logging.warning(f"[{task_name}] Malformed response; asking again "
                                 f"({attempt} of {MALFORMED_RESPONSE_RETRIES}).")
@@ -331,7 +340,7 @@ class AIManager:
     # ---------- reading the reply: text -> dict -> checked dict ----------
 
     @staticmethod
-    def _parse(raw: str | None) -> dict | None:
+    def __parse(raw: str | None) -> dict | None:
         """Extracts a JSON object from the response text. Handles markdown code fences and stray text around
         the object. Returns None (and logs why) if there is no usable object."""
         if not raw:
@@ -361,7 +370,7 @@ class AIManager:
             return None
         return data
 
-    def _validate(self, data: dict, task_name: str, schema: dict) -> dict | None:
+    def __validate_schema(self, data: dict, task_name: str, schema: dict) -> dict | None:
         """Checks required keys, types, enum values and ranges against the schema.
 
         Returns a cleaned copy (unknown keys dropped, strings trimmed, enums normalised), or None if anything
@@ -402,13 +411,16 @@ class AIManager:
 
     @staticmethod
     def __validate_number(value: Any, expected: str, name: str, path: str) -> int | float:
-        """A number (a whole one for "integer"), inside its NUMERIC_RANGES range if it has one."""
+        """A number (a whole one for "integer"), inside its NUMERIC_RANGES range if it has one. A whole number is
+        kept as an int (2.0 -> 2), so the pages never show "2.0 years"; 1.5 stays 1.5."""
         # bool is checked separately because in Python True/False count as integers
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{path} should be a number, got {value!r}")
-        if expected == "integer":
-            if value != int(value):
-                raise ValueError(f"{path} should be a whole number, got {value!r}")
+        if value != value or value in (float("inf"), float("-inf")):  # NaN is the one value not equal to itself
+            raise ValueError(f"{path} should be a finite number, got {value!r}")
+        if expected == "integer" and value != int(value):
+            raise ValueError(f"{path} should be a whole number, got {value!r}")
+        if value == int(value):
             value = int(value)
         if name in NUMERIC_RANGES:
             low, high = NUMERIC_RANGES[name]
@@ -451,7 +463,7 @@ class AIManager:
     # ---------- the prompt for each kind of call ----------
 
     @staticmethod
-    def _candidate_prompt(record: dict) -> str:
+    def __candidate_prompt(record: dict) -> str:
         """AI call #1: the resume -> the candidate's profile."""
         # f"""...""" is a multi-line f-string: {...} parts are replaced with values
         return f"""Extract the candidate's details from this resume.
@@ -474,16 +486,22 @@ RULES:
 - years_of_experience: full-time work only, in years (decimals allowed). Internships do NOT count. 0 if none.
 - internship_months: total months of internships or attachments. 0 if none.
 - seniority_level: the level they should apply at, picked from {SENIORITY_LEVELS}.
-- core_skills: technical and professional skills shown in the resume.
+- core_skills: technical and professional skills shown in the resume: tools and software, and areas of
+  professional know-how (the same kind of skill each job's key skills are read as, so the two can be compared).
+  {SKILL_NAMING_RULE}
 - certifications: professional certifications only (not degrees). Empty list if none.
-- search_keywords: 3-4 common job titles this candidate should search for, without seniority words
-  (e.g. "Software Engineer", "Data Analyst"), based on their skills and qualification.
+- search_keywords: 4-5 job titles this candidate should search for, based on their skills and qualification.
+  The job portal only finds postings that contain every word of a title, so each title is short (1-3 words)
+  and as common as employers write it (e.g. "Data Analyst", "Operations Analyst", "Software Engineer"), with no
+  industry or product words (write "Operations Analyst", not "Fintech Operations Analyst").
+  If they have less than 1 year of full-time work, make one of them an entry-level title employers use, such as
+  "Junior Analyst", "Graduate Trainee" or "Management Associate"; otherwise use no seniority words.
 - Use only facts in the resume. Do not invent anything.
 
 Return JSON only."""
 
     @staticmethod
-    def _requirements_prompt(record: dict) -> str:
+    def __requirements_prompt(record: dict) -> str:
         """AI call #2+: a batch of listings -> each one's requirements, compared with the candidate."""
         # Number each job (### JOB 0, ### JOB 1, ...) so the AI can say which answer is for which job
         job_blocks = []
@@ -514,22 +532,18 @@ CANDIDATE SKILLS:
 {", ".join(candidate["core_skills"])}
 
 RULES (apply to each job separately):
-- required_skills: up to 10 of the most important skills the job asks for, from the description and
-  listed skills. Name only things that HAVE A NAME you could put on a course, a certificate or a tool
-  list: software, instruments, equipment, languages, platforms, frameworks, named methods, techniques
-  or standards, and certifications. Whatever field this posting is in, the test is the same.
-  Examples from different fields: SQL, Power BI, SAP, AutoCAD, Solidworks, HPLC, PCR, Mass Spectrometry,
-  Cell Culture, GMP, ISO 13485, AWS, Kubernetes, IFRS, CFA, Financial Modelling.
-  Take CANDIDATE SKILLS above as the guide to which of this posting's skills belong to the candidate's
-  field, and name those first; the field is whatever their skills show it to be.
-  Leave out two kinds of tag, however the posting words them:
-  1. workplace behaviours and personal qualities: "Work in a Fast Paced Environment", "Team Player",
-     "Good Communication", "Attention to Detail", "Willingness to Learn", "Problem Solving".
-  2. generic activities and concepts that name no particular tool, method or standard:
-     "Reporting", "Presentation Skills", "Key Performance Indicators", "Ad-Hoc Analysis",
-     "Requirements Gathering", "Project Timeline", "Stakeholder Management", "Documentation".
-  Neither kind is something a candidate could go and train for, so neither belongs here. If that leaves
-  fewer than 5 skills, return only the ones that qualify rather than padding the list.
+- required_skills: the 4-5 most important technical and professional skills this job asks for, read from
+  the WHOLE posting (description and listed skills) the same way a resume's skills are read: tools and
+  software (e.g. SQL, Python, Power BI, Microsoft Excel, SAP) and areas of professional know-how (e.g.
+  Financial Analysis, Data Analysis, Reconciliation, KYC, Regulatory Compliance, Risk Management). The same
+  holds in any field: a lab job's skills read like HPLC, PCR or ISO 13485; an engineering job's like AutoCAD.
+  Most important first: what the job needs to be done before what is "an advantage" or "a plus".
+  Name each one separately ("SQL and Python" is two skills) and as the candidate's resume would write it,
+  so the two lists can be compared. {SKILL_NAMING_RULE} Take CANDIDATE SKILLS above as the guide to which of this posting's
+  skills belong to the candidate's field. Never add a skill the posting does not ask for.
+  Leave out workplace behaviours and personal qualities, however the posting words them: "Teamwork",
+  "Team Player", "Problem Solving", "Time Management", "Good Communication", "Attention to Detail",
+  "Work in a Fast Paced Environment", "Willingness to Learn".
 - min_education: the minimum qualification stated, picked from {JOB_EDUCATION_LEVELS}.
   "Degree" means "Bachelor's". Use "Not specified" if the posting does not say.
 - certifications_required: certifications the posting asks for. Empty list if none.
@@ -548,12 +562,17 @@ RULES (apply to each job separately):
 Return JSON only."""
 
     @staticmethod
-    def _tailored_resume_prompt(record: dict) -> str:
+    def __tailored_resume_prompt(record: dict) -> str:
         """Tailoring a PDF resume: the whole resume rewritten for one job."""
         job = record["job"]
         # The skills the job card counted as matched, so the tailored resume keeps the same count
         matched_skills = "\n".join(f'- {match["job_skill"]} (the candidate\'s "{match["candidate_skill"]}")'
                                    for match in job.get("matched_skills", [])) or "None"
+        # A second try says what was wrong with the first, last, where a small model follows it best
+        retry = "" if not record.get("feedback") else (
+            "\nYOUR LAST ANSWER BROKE RULE 6 HERE, so these changes were thrown out. Write them again without the "
+            "problem, or leave them as the resume has them, and keep your other changes:\n"
+            + "\n".join(f"- {line}" for line in record["feedback"]) + "\n")
         return f"""Rewrite this candidate's resume so it is tailored to the job below.
 
 JOB:
@@ -570,48 +589,55 @@ RESUME:
 {record["resume_text"]}
 
 RULES:
-- Use ONLY facts in the resume. Never add a skill, tool, employer, job title, qualification, date,
-  number or achievement that is not in the resume, even if the job asks for it. Leave gaps out.
-- Keep the resume's own layout: the same sections, in the same order, with the same headings
-  (e.g. keep "PROFILE"; do not rename it "Summary"). Do not add, merge, split or move sections.
-- Keep it the same length: the resume has about {len(record["resume_text"].split())} words, and the tailored one
-  must not have more, so it fits on the same number of pages.
-- Write job keywords in normal sentence case inside a sentence, e.g. "collaborating with stakeholders",
-  not "Collaboration With Stakeholders".
-- name and contact: copied exactly from the resume, including the contact line's separators
-  (e.g. "Singapore | +65 9000 0000 | name@example.com"). Empty string if the resume has none.
-- kind "text" sections (e.g. a profile or summary): rewrite the paragraph to aim at this job,
-  about as long as the original, using only facts from the resume. No numbers that are not in it.
-- kind "skills" sections: keep the resume's own groups and labels (e.g. "Technical"), in the same order.
-  Copy skill names exactly as written; within each group, put the most relevant to this job first.
-  Only if there are more than 15 skills in total, leave out ones that do not help with this job.
-- kind "entries" sections (e.g. experience, education, projects, certifications): keep every entry,
-  in the resume's order. Copy title, organisation, subtitle and dates exactly as written.
-  bullets: rewrite to show what matters for this job: start with an action verb, put the most relevant
-  first, use the job's key skill words only where the resume shows that skill, and keep any numbers exactly.
-  You may shorten or drop bullets that do not help with this job.
-- changes: 3-6 short notes on what you changed and why,
-  e.g. "Moved SQL to the front of the Technical skills because the job asks for it".
-- Keep every MATCHED SKILL visible in the tailored resume (in a skills group, a text section or a bullet).
-- skill_evidence: one item per MATCHED SKILL. job_skill is copied exactly from MATCHED SKILLS.
-  evidence is a short phrase (2-12 words) copied exactly, character for character, from your
-  tailored resume (a skill name, or part of a text section or a bullet) that shows that skill.
-  Do not add items for skills that are not in MATCHED SKILLS. Empty list if there are none.
-
+1. Layout: the resume's own sections, in the same order, with the same headings (keep "PROFILE", never
+   "Summary"). Copy exactly: name, contact line (with its separators, e.g. "Singapore | +65 9000 0000"; empty
+   if none), and each entry's title, organisation, subtitle and dates. At most about
+   {len(record["resume_text"].split())} words in total, so it keeps its pages.
+2. What to change: aim a "text" section such as a profile at this job. In "skills" sections keep the resume's
+   groups, labels and skill names, putting the most relevant first (drop some only if there are over 15).
+   In "entries" sections keep every entry in order; a bullet starts with an action verb and puts what matters
+   for this job first, and you may shorten or drop bullets that don't help. Write job words in sentence case.
+3. Keep every MATCHED SKILL visible (in a skills group, a text section or a bullet).
+4. changes: 3-6 short notes on what you changed and why ("Moved SQL to the front because the job asks for it").
+5. skill_evidence: one item per MATCHED SKILL: job_skill copied from MATCHED SKILLS, and evidence, a 2-12 word
+   phrase copied character for character from your tailored resume. Empty list if none.
+6. Before you answer, check what you wrote and undo any change that fails: a bullet names only the tools its
+   own resume bullet names; nothing gets a number, qualification, employer or date the resume doesn't give it;
+   and the candidate's own words for how skilled they are stay (keep "Comfortable with").
+{retry}
 Return JSON only."""
 
     @staticmethod
-    def _docx_edits_prompt(record: dict) -> str:
+    def __docx_edits_prompt(record: dict) -> str:
         """Tailoring a Word resume: new wording for some of its paragraphs."""
         job = record["job"]
         matched_skills = "\n".join(f'- {match["job_skill"]} (the candidate\'s "{match["candidate_skill"]}")'
                                    for match in job.get("matched_skills", [])) or "None"
-        # Paragraphs that may be reworded get a [number]; the rest are shown only so the AI has context
+        # A second try says what was wrong with the first, last, where a small model follows it best
+        retry = "" if not record.get("feedback") else (
+            "\nYOUR LAST ANSWER BROKE RULE 6 HERE, so these edits were thrown out. Write them again without the "
+            "problem, or leave those paragraphs out, and keep your other edits:\n"
+            + "\n".join(f"- {line}" for line in record["feedback"]) + "\n")
+        # Paragraphs that may be reworded get a [number]; the rest are shown only so the AI has context. Each numbered
+        # one also lists the job keywords it already names: a small model kept adding a keyword the resume shows
+        # elsewhere (Tableau into a Power BI bullet) until each paragraph said which ones are its own
+        # The tools it looks for: the job keywords the resume shows, and the resume's own skills lists
+        # (e.g. "Technical: Python, pandas, SQL, Power BI"), so a Power BI bullet says "Power BI" even for a job
+        # that doesn't ask for it
+        tools = list(record["use_keywords"])
+        for paragraph in record["paragraphs"]:
+            label, _, items = paragraph["text"].partition(":")
+            if items.count(",") >= 2 and len(label.split()) <= 4:
+                tools += [re.sub(r"\(.*?\)", "", item).strip() for item in items.split(",")]
+        tools = [tool for tool in dict.fromkeys(tools) if 1 < len(tool) <= 30]
         lines = []
         for paragraph in record["paragraphs"]:
             if paragraph["editable"]:
                 words = len(paragraph["text"].split())
-                lines.append(f"[{paragraph['id']}] ({paragraph['kind']}, {words} words) {paragraph['text']}")
+                names = [tool for tool in tools if re.search(
+                    rf"(?<![\w+#]){re.escape(tool)}(?![\w+#])", paragraph["text"], re.IGNORECASE)]
+                lines.append(f"[{paragraph['id']}] ({paragraph['kind']}, {words} words, names: "
+                             f"{', '.join(names) or 'none'}) {paragraph['text']}")
             else:
                 lines.append(f"    {paragraph['text']}")
         resume_lines = "\n".join(lines)
@@ -624,7 +650,7 @@ Title: {job.get('title')}
 Company: {job.get('company')}
 Description: {job.get('description') or 'Not available'}
 
-JOB KEYWORDS THE RESUME SHOWS (use these words where they describe what the resume shows):
+JOB KEYWORDS THE RESUME SHOWS (use one only in a paragraph whose "names" list has it):
 {', '.join(record["use_keywords"]) or 'None'}
 
 JOB KEYWORDS THE RESUME DOES NOT SHOW (never use these words):
@@ -637,30 +663,21 @@ RESUME (one paragraph per line; only [numbered] ones can be changed):
 {resume_lines}
 
 RULES:
-- Use ONLY facts in the resume. Never add a skill, tool, employer, job title, qualification, date
-  or achievement that is not in the resume, even if the job asks for it.
-- Never add a number, duration or count (e.g. "2 years of experience") that is not in the resume.
-- edits: only the paragraphs you change, each with its [number] and its new wording.
-  Leave out paragraphs that are already a good fit. Paragraphs cannot be moved or added.
-- Keep the resume the same length: use at most the number of words shown for each paragraph, and
-  fewer if you can. A longer resume can spill onto another page.
-- Write job keywords in normal sentence case inside a sentence, e.g. "collaborating with stakeholders",
-  not "Collaboration With Stakeholders".
-- (text) paragraphs such as a profile: aim them at this job, using only facts from the resume.
-- (bullet) paragraphs: start with an action verb, put what matters for this job first, describe the work
-  with the job's words from the first keyword list where they fit, and keep any numbers exactly.
-- Never change a list of names, e.g. "Relevant modules: ...", certifications, courses or awards:
-  adding a keyword there would claim something the candidate never did. Leave those paragraphs out.
-- Remove only the few bullets that clearly do not help with this job, by giving them an empty text.
-  Most bullets should be kept or reworded, and never remove every bullet under a heading.
-- reason: for each edit, why you made it, in under 15 words,
-  e.g. "leads with SQL, which the job asks for" or "not relevant to a data role".
-- Keep every MATCHED SKILL visible: don't remove or reword away the only place that shows one.
-- skill_evidence: one item per MATCHED SKILL. job_skill is copied exactly from MATCHED SKILLS.
-  evidence is a short phrase (2-12 words) copied exactly, character for character, from the resume
-  as it will read after your edits (a paragraph you changed, or one you left as it is) that shows
-  that skill. Do not add items for skills that are not in MATCHED SKILLS. Empty list if there are none.
-
+1. What to change: reword freely so each paragraph fits this job, keeping every fact as the resume states it.
+   Aim a (text) paragraph such as a profile at this job. A (bullet) starts with an action verb and puts what
+   matters for this job first. Leave lists of names (modules, certifications, courses, awards) as they are.
+   Write job words in sentence case ("collaborating with stakeholders").
+2. Length: at most the number of words shown for each paragraph, so the resume keeps its pages.
+3. Dropping: give a bullet that clearly doesn't help an empty text. Drop only a few, never every bullet under
+   a heading, and never the only place a MATCHED SKILL shows.
+4. edits: only the paragraphs you change, each with its [number], new wording and a reason under 15 words
+   (e.g. "leads with SQL, which the job asks for" or "not relevant to a data role").
+5. skill_evidence: one item per MATCHED SKILL: job_skill copied from MATCHED SKILLS, and evidence, a 2-12 word
+   phrase copied character for character from the resume as it will read after your edits. Empty list if none.
+6. Before you answer, check each edit and drop any that fails: a bullet names only the tools in its own
+   "names" list; nothing gets a number, qualification, employer or date its original doesn't have (a profile may
+   use any from the resume); and the candidate's own words for how skilled they are stay (keep "Comfortable with").
+{retry}
 Return JSON only."""
 
     # ---------- public calls for the other managers ----------
@@ -676,7 +693,7 @@ Return JSON only."""
         """AI call: the resume -> a validated candidate record (see CANDIDATE_SCHEMA), or None."""
         return self.run_task("candidate_profile", {"resume_text": self.__capped_resume(resume_text)})
 
-    def extract_job_requirements(self, jobs: list[dict], profile: dict) -> list[dict | None]:
+    def __requirements_for_batch(self, jobs: list[dict], profile: dict) -> list[dict | None]:
         """AI call for one batch of listings. Returns one validated answer per listing, None where the AI
         gave none."""
         answers: list[dict | None] = [None] * len(jobs)
@@ -711,7 +728,7 @@ Return JSON only."""
         # Send up to 5 batches at once; wait in 0.5 s slices so Ctrl+C works on Windows
         pool = ThreadPoolExecutor(max_workers=max_workers)
         try:
-            futures = [pool.submit(self.extract_job_requirements, batch, profile) for batch in batches]
+            futures = [pool.submit(self.__requirements_for_batch, batch, profile) for batch in batches]
             still_running = set(futures)
             done = 0
             while still_running:
@@ -738,15 +755,19 @@ Return JSON only."""
         summary["listings_analysed"] = sum(answer is not None for answer in answers)
         return answers
 
-    def tailor_resume(self, resume_text: str, job: dict) -> dict | None:
+    def tailor_resume(self, resume_text: str, job: dict, feedback: list[str] | None = None) -> dict | None:
         """AI call: a PDF resume rewritten for one job. Returns the validated reply (name, contact, sections,
-        changes, skill_evidence), or None. TailoringGuard.ground_tailored_resume checks it against the original."""
-        return self.run_task("tailored_resume", {"resume_text": self.__capped_resume(resume_text), "job": job})
+        changes, skill_evidence), or None. TailoringGuard.ground_tailored_resume checks it against the original.
+        feedback: on a second try, why changes from the first were thrown out, e.g. ['In "Profile": ...']."""
+        return self.run_task("tailored_resume", {"resume_text": self.__capped_resume(resume_text), "job": job,
+                                                 "feedback": feedback or []})
 
-    def tailor_docx(self, paragraphs: list[dict], job: dict, use_keywords: list[str],
-                    avoid_keywords: list[str]) -> dict | None:
-        """AI call: new wording for some paragraphs of a Word resume. Returns the validated reply (edits,
-        skill_evidence) plus the paragraphs it was sent, or None. TailoringGuard.ground_docx_edits checks it."""
+    def tailor_docx(self, paragraphs: list[dict], job: dict, keywords: tuple[list[str], list[str]],
+                    feedback: list[str] | None = None) -> dict | None:
+        """AI call: new wording for some paragraphs of a Word resume. keywords = (use, avoid), what
+        LogicManager.job_keywords returns. Returns the validated reply (edits, skill_evidence) plus the paragraphs
+        it was sent, or None. TailoringGuard.ground_docx_edits checks it. feedback: as for tailor_resume."""
+        use_keywords, avoid_keywords = keywords
         # Like _capped_resume: stop adding paragraphs once MAX_RESUME_CHARS is reached
         capped, length = [], 0
         for paragraph in paragraphs:
@@ -758,7 +779,7 @@ Return JSON only."""
             capped.append(paragraph)
 
         result = self.run_task("docx_edits", {"paragraphs": capped, "job": job, "use_keywords": use_keywords,
-                                                 "avoid_keywords": avoid_keywords})
+                                                 "avoid_keywords": avoid_keywords, "feedback": feedback or []})
         if result is None:
             return None
         return {**result, "paragraphs": capped}

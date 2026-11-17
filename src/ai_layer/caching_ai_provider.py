@@ -5,14 +5,13 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Callable
 
-from ai.base_ai_provider import BaseAIProvider
+from ai_layer.ai_provider import AIProvider
 
 
-class CachingAIProvider(BaseAIProvider):
+class CachingAIProvider(AIProvider):
     """Optional (AIManager.from_environment uses it only when AI_CACHE=on; by default every record goes to the live
-    AI). A provider that stands in for another one (it is a BaseAIProvider too, so AIManager can't tell the difference):
+    AI). A provider that stands in for another one (it is an AIProvider too, so AIManager can't tell the difference):
     a prompt it has answered before gets the saved reply; a new one goes to the wrapped provider and its reply is
     saved. That makes runs repeatable (the same resume and listings give the same matches every time) and lets a
     demo replay earlier answers with no network or API key.
@@ -21,15 +20,22 @@ class CachingAIProvider(BaseAIProvider):
     kept in a JSON file; a missing or corrupt file just starts an empty cache.
     """
 
-    def __init__(self, inner: BaseAIProvider, path: str) -> None:
-        # The wrapped provider is handed in (aggregation) and passed to the base class as the client, so the base
-        # class never looks for an API key of its own: only a cache miss needs the wrapped provider's key
-        super().__init__({"key": "cache", "label": inner.label, "key_env": "", "default_model": inner.model},
-                         inner.model, client=inner)
+    def __init__(self, inner: AIProvider, path: str) -> None:
+        # Aggregation: the wrapped provider is handed in and lives on its own; a cache miss is the only time it is used
         self.__inner = inner
         self.__path = path
         self.__lock = threading.Lock()  # web searches run in background threads
         self.__replies = self.__load()
+
+    @property
+    def provider_name(self) -> str:
+        """The wrapped provider's name (a cache is invisible to the user)."""
+        return self.__inner.provider_name
+
+    @property
+    def setup_problem(self) -> str:
+        """The wrapped provider's (saved replies still work without a key, but a cache miss would not)."""
+        return self.__inner.setup_problem
 
     @property
     def size(self) -> int:
@@ -37,21 +43,14 @@ class CachingAIProvider(BaseAIProvider):
         with self.__lock:
             return len(self.__replies)
 
-    def _create_client(self, api_key: str) -> object:
-        return self.__inner  # never needed: the wrapped provider is given as the client in __init__
-
-    def _attempts(self, client: object, prompt: str, task_name: str,
-                  schema: dict) -> list[Callable[[], str | None]]:
-        """One attempt: the saved reply, else the wrapped provider's (which does its own retries)."""
-        return [lambda: self.__reply(prompt, task_name, schema)]
-
     def discard_reply(self, prompt: str, task_name: str, schema: dict) -> None:
         """Forgets a saved reply that turned out unusable, so asking again reaches the real AI."""
         with self.__lock:
             if self.__replies.pop(self.__key(prompt, task_name, schema), None) is not None:
                 self.__save()
 
-    def __reply(self, prompt: str, task_name: str, schema: dict) -> str | None:
+    def complete(self, prompt: str, task_name: str, schema: dict) -> str | None:
+        """The saved reply, else the wrapped provider's (which does its own retries), saved for next time."""
         key = self.__key(prompt, task_name, schema)
         with self.__lock:
             saved = self.__replies.get(key)
@@ -67,7 +66,7 @@ class CachingAIProvider(BaseAIProvider):
 
     def __key(self, prompt: str, task_name: str, schema: dict) -> str:
         """The same task, model, prompt and schema always give the same key; any change gives a new one."""
-        text = json.dumps([task_name, self.__inner.model, prompt, schema], sort_keys=True)
+        text = json.dumps([task_name, self.__inner.provider_name, prompt, schema], sort_keys=True)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def __load(self) -> dict[str, str]:
