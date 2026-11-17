@@ -4,11 +4,20 @@ results/
 output_results/
 __pycache__/
 
-# Saved jobs database, its backups and in-progress saves (data_manager.py)
+# AI reply cache and last portal listings (saved jobs are in PostgreSQL, not in files)
 data/
 
-# Log file written by main.py (logs/job_matcher.log)
+# Log file written by the web app (logs/job_matcher.log)
 logs/
 # Resumes hold personal details: keep only the sample in git (uploads from the web app land here too)
 resumes/*
 !resumes/sample_resume_fintech.docx
+
+# Coverage reports (pytest --cov)
+.coverage
+htmlcov/
+
+# Editor and tool caches
+.vscode/
+.pytest_cache/
+.ruff_cache/

@@ -1,4 +1,4 @@
-# Core Dependencies for HR Resume Screening System
+# Dependencies for Resume Job Matcher
 # Pinning exact versions for Docker and team environment synchronization
 # Works on Python 3.11 (Docker image) through 3.14
 
@@ -9,10 +9,8 @@ pypdf==6.19.0
 python-docx==1.1.2
 
 # AI / LLM API Integration
-# openai: OpenAI, plus Qwen and Gemini through their OpenAI-compatible endpoints
-# anthropic: Claude
+# openai: the OpenAI SDK, used for Google Gemini through Gemini's OpenAI-compatible endpoint
 openai==3.24.0
-anthropic==1.11.0
 
 # Job Portal API (MyCareersFuture)
 requests==2.34.2
@@ -28,6 +26,8 @@ pytest==9.1.1
 # Test coverage in CI (python -m pytest --cov=src)
 pytest-cov==7.1.0
 
-# PostgreSQL (saved jobs)
+# PostgreSQL (saved jobs; the only storage)
+# psycopg: the database driver ([binary] ships its own libpq, so no system package is needed)
+# psycopg-pool: reuses connections between requests
 psycopg[binary]==3.3.9
 psycopg-pool==3.3.3

@@ -36,8 +36,43 @@ jobs:
       - name: Compile all Python files
         run: python -m compileall -q src tests
 
-      # 5. The automated tests (pytest). They use temporary files, typed answers, a fake AI provider and
-      #    fake portal replies, so no keyboard, browser, internet, API key or real saved data is needed.
+      # 5. The automated tests (pytest). They use temporary files, a fake AI provider and
+      #    fake portal and database replies, so no keyboard, browser, internet, API key or real saved data is needed.
       #    The coverage report lists the lines no test runs; the job fails if coverage drops under 90%
       - name: Run tests with coverage
-        run: python -m pytest
+        run: python -m pytest --cov=src --cov-report=term-missing --cov-fail-under=90
+
+      # 6. Every layer imports and the web pages load. No API key is needed, because no search is run.
+      #    DATABASE_URL points at a port nothing listens on: the pages must still load (200) with no database,
+      #    which proves the app copes with PostgreSQL being down
+      - name: Import layers and load web pages
+        working-directory: src
+        env:
+          DATABASE_URL: postgresql://unused@127.0.0.1:1/unused
+        run: |
+          python -c "
+          from io_layer import io_manager
+          from ai_layer import ai_manager
+          from logic_layer import logic_manager
+          from data_layer import data_manager
+          import web_app
+          client = web_app.WebApp.create_app().test_client()
+          for page in ('/', '/saved'):
+              status = client.get(page).status_code
+              print(page, status)
+              assert status == 200, f'{page} returned {status}'
+          "
+
+  # The same tests inside the Docker image, built from a clean checkout: proves the Dockerfile installs everything
+  # the app and its tests need, with no manual steps
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build the image
+        run: docker build -t jobmatcher .
+
+      - name: Run the tests in the container
+        run: docker run --rm jobmatcher python -m pytest
