@@ -1,6 +1,6 @@
 """GreedyPlanner: each roadmap step takes the skill that lifts the jobs the most places."""
 
-from planning.roadmap_planner import RoadmapPlanner
+from logic_layer.roadmap_planner import RoadmapPlanner
 
 
 class GreedyPlanner(RoadmapPlanner):
@@ -12,7 +12,7 @@ class GreedyPlanner(RoadmapPlanner):
 
     @property
     def label(self) -> str:
-        return "Biggest rank gain first"
+        return "Rank higher"
 
     def value(self, report: dict) -> tuple:
         return report["places_gained"], report["outcome_upgrades"], report["skill_matches_gained"]

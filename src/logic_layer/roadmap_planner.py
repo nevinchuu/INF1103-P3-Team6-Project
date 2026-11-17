@@ -16,7 +16,7 @@ class RoadmapPlanner(ABC):
     @property
     @abstractmethod
     def label(self) -> str:
-        """Name shown to the user, e.g. "Biggest rank gain first"."""
+        """Name shown to the user, e.g. "Rank higher"."""
 
     @abstractmethod
     def value(self, report: dict) -> tuple:
